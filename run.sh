@@ -219,7 +219,7 @@ if [[ -z "${SKIP_OLLAMA:-}" ]] && ollama_up; then
     # its own 8192, and whichever had been run last decided what Ollama really
     # served. Both now read LLM_NUM_CTX / LLM_NUM_GPU out of .env.
     say "Building $MODEL_NAME (one time)"
-    "$PY" -m backend.scripts.setup_model
+    "$PY" -m backend.scripts.setup_model --target "$MODEL_NAME"
   else
     warn "$MODEL_NAME is not in Ollama and the 'ollama' CLI is not on PATH."
     warn "  ollama create $MODEL_NAME -f Modelfile"

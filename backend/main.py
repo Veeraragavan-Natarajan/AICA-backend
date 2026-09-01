@@ -104,7 +104,10 @@ def _warm_tts_cache(tts) -> None:
 def _warm(tts) -> None:
     from .conversation import (
         _CANNOT_RECALL,
+        _ECHO_RECOVERY,
+        _EMERGENCY_STUCK_REPLIES,
         _GO_AHEAD,
+        _OUT_OF_SCOPE,
         _STUCK_REPLIES,
         OPENING_LINE,
         render_template,
@@ -115,6 +118,9 @@ def _warm(tts) -> None:
         _GO_AHEAD,
         _CANNOT_RECALL,
         *_STUCK_REPLIES,
+        *_EMERGENCY_STUCK_REPLIES,
+        _ECHO_RECOVERY,
+        *_split_reply_into_clauses(_OUT_OF_SCOPE),
         # The openers the model reaches for on almost every call.
         "சரி சார்.",
         "கண்டிப்பா சார்.",

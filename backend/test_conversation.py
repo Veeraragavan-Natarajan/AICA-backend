@@ -370,10 +370,9 @@ def test_the_script_that_builds_the_model_agrees_with_the_modelfile() -> None:
     while the model Ollama really served had a window nothing in the repo
     claimed - visible only by reading `ollama ps` by hand.
 
-    num_gpu is checked in the same breath and for the same reason: an explicit
-    one disables llama.cpp's fit-to-free-VRAM recovery, so a Modelfile and a
-    build script disagreeing about it is the difference between a working
-    server and one that 500s on every turn.
+    num_gpu and the anti-loop parameters are checked in the same breath and
+    for the same reason: run.sh uses the generated file in production, so any
+    parameter omitted there is silently absent from the model callers use.
     """
     from pathlib import Path
     import re
@@ -387,7 +386,7 @@ def test_the_script_that_builds_the_model_agrees_with_the_modelfile() -> None:
         match = re.search(rf"^PARAMETER\s+{name}\s+(\S+)", text, re.MULTILINE)
         return match.group(1) if match else None
 
-    for name in ("num_ctx", "num_gpu"):
+    for name in ("num_ctx", "num_gpu", "temperature", "repeat_penalty", "repeat_last_n"):
         assert parameter(built, name) == parameter(modelfile, name), (
             f"{name}: setup_model.py builds {parameter(built, name)!r} but the "
             f"Modelfile documents {parameter(modelfile, name)!r}. The build "

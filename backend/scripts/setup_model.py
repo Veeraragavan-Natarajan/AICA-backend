@@ -5,7 +5,7 @@ Pointing it at a bare tag lets Ollama pick a VRAM-derived default (often
 2048-4096), which silently truncates the assembled system prompt before its
 language rules and produces the two failures captured in LLM_TEST_RESULTS.txt -
 the agent answers in English and invents a caller mobile number. The repo-root
-Modelfile pins num_ctx 8192, but it hard-codes a `FROM` tag that may not be
+Modelfile pins the context window, but it hard-codes a `FROM` tag that may not be
 pulled on a given machine; when it isn't, the backend starts fine and then
 fails on the first turn with a 404 from Ollama, which looks nothing like a
 configuration problem.
@@ -18,6 +18,7 @@ are progressively weaker but keep a fresh machine testable rather than broken.
 
 Usage:
     python -m backend.scripts.setup_model            # create/refresh aruvi-base
+    python -m backend.scripts.setup_model --target x # create the configured name
     python -m backend.scripts.setup_model --list     # just show what is available
 """
 
@@ -25,8 +26,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -37,9 +38,9 @@ import urllib.request
 # Ollama's REST port. Kept separate from LLM_BASE_URL (which points at the
 # OpenAI-compatible /v1 surface) because model management is not part of that
 # API - creating a model is an Ollama-native operation.
-OLLAMA_HOST = "http://127.0.0.1:11434"
+OLLAMA_HOST = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 
-TARGET_MODEL = "aruvi-base"
+DEFAULT_TARGET_MODEL = "aruvi-base"
 
 # READ FROM .env, not restated here. This script is what actually BUILDS the
 # model, and it used to carry its own NUM_CTX = 8192 while both the Modelfile
@@ -52,9 +53,15 @@ NUM_CTX = _LLM.num_ctx
 TEMPERATURE = _LLM.temperature
 NUM_GPU = _LLM.num_gpu
 
-# Best first. Every entry must support OpenAI-style tool calling, because the
-# whole tool layer (backend/tools.py) depends on it - a model without the
-# "tools" capability will hold a conversation and never book anything.
+# These are tuned model-build parameters, not OpenAI request parameters. Keep
+# them in the generated Modelfile as well as the checked-in one: run.sh builds
+# through this script, so omitting them here silently disables the anti-loop
+# configuration documented in the repo-root Modelfile.
+REPEAT_PENALTY = 1.15
+REPEAT_LAST_N = 128
+
+# Best first. The current conversation path is speech-only, so these are
+# ordered by measured Tamil/English register quality rather than tool support.
 PREFERRED_BASES = [
     "qwen3:4b-instruct-2507-q4_K_M",
     "qwen2.5:3b",
@@ -86,19 +93,14 @@ def pick_base(models: list[dict]) -> str | None:
     return None
 
 
-def supports_tools(models: list[dict], name: str) -> bool:
-    for model in models:
-        if model["name"] == name:
-            return "tools" in (model.get("capabilities") or [])
-    return False
-
-
 def build_modelfile(base: str) -> str:
     """The Modelfile this build uses. .env is the only source of truth for it."""
     lines = [
         f"FROM {base}",
         f"PARAMETER num_ctx {NUM_CTX}",
         f"PARAMETER temperature {TEMPERATURE}",
+        f"PARAMETER repeat_penalty {REPEAT_PENALTY}",
+        f"PARAMETER repeat_last_n {REPEAT_LAST_N}",
     ]
     # Omitted ENTIRELY when blank, rather than written as some default. An
     # explicit num_gpu disables llama.cpp's own fit-to-free-VRAM logic
@@ -110,10 +112,10 @@ def build_modelfile(base: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def create_model(base: str) -> None:
+def create_model(base: str, target_model: str = DEFAULT_TARGET_MODEL) -> None:
     modelfile = build_modelfile(base)
     offload = f"num_gpu={NUM_GPU}" if NUM_GPU else "GPU offload chosen by Ollama"
-    print(f"Creating {TARGET_MODEL} from {base} (num_ctx={NUM_CTX}, {offload})...")
+    print(f"Creating {target_model} from {base} (num_ctx={NUM_CTX}, {offload})...")
 
     # A real file, not `-f -`: passing the Modelfile on stdin is rejected by
     # released Ollama builds ("no Modelfile or safetensors files found").
@@ -121,7 +123,7 @@ def create_model(base: str) -> None:
         path = Path(directory) / "Modelfile"
         path.write_text(modelfile, encoding="utf-8")
         result = subprocess.run(
-            ["ollama", "create", TARGET_MODEL, "-f", str(path)],
+            ["ollama", "create", target_model, "-f", str(path)],
             text=True,
             capture_output=True,
         )
@@ -137,6 +139,11 @@ def create_model(base: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="show installed models and exit")
+    parser.add_argument(
+        "--target",
+        default=os.getenv("LLM_MODEL", DEFAULT_TARGET_MODEL),
+        help="name to create (default: LLM_MODEL or aruvi-base)",
+    )
     args = parser.parse_args()
 
     models = installed_models()
@@ -156,13 +163,6 @@ def main() -> None:
             f"then re-run this script. (Also acceptable: {', '.join(PREFERRED_BASES[1:])})"
         )
 
-    if not supports_tools(models, base):
-        print(
-            f"WARNING: {base} does not advertise tool-calling support. The conversation "
-            "will run but no tool (lookupPatient, bookAppointment, ...) will ever fire.",
-            file=sys.stderr,
-        )
-
     if base != PREFERRED_BASES[0]:
         print(
             f"NOTE: falling back to {base}; {PREFERRED_BASES[0]} is the model the "
@@ -171,10 +171,10 @@ def main() -> None:
             f"    ollama pull {PREFERRED_BASES[0]}\n"
         )
 
-    create_model(base)
+    create_model(base, args.target)
     print(
         f"\nDone. Set this in .env (it is the default):\n"
-        f"    LLM_MODEL={TARGET_MODEL}\n"
+        f"    LLM_MODEL={args.target}\n"
         f"    LLM_BASE_URL={OLLAMA_HOST}/v1\n"
         "Then start the backend:  uvicorn backend.main:app --reload"
     )

@@ -78,6 +78,45 @@ class _FakeTts:
         return SynthesisResult(samples=np.array([1, 2, 3], dtype=np.int16), sample_rate=self.sample_rate)
 
 
+def test_tts_warmup_covers_every_scripted_conversation_line() -> None:
+    """New guard/recovery lines must keep the startup latency optimization."""
+    from types import SimpleNamespace
+
+    from .conversation import (
+        _CANNOT_RECALL,
+        _ECHO_RECOVERY,
+        _EMERGENCY_STUCK_REPLIES,
+        _GO_AHEAD,
+        _OUT_OF_SCOPE,
+        _STUCK_REPLIES,
+        split_reply_into_clauses,
+    )
+    from .main import _warm
+
+    class _WarmTts:
+        settings = SimpleNamespace(language="ta")
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def synthesize(self, text: str, language: str) -> None:
+            assert language == "ta"
+            self.calls.append(text)
+
+    tts = _WarmTts()
+    _warm(tts)
+
+    expected = {
+        _GO_AHEAD,
+        _CANNOT_RECALL,
+        _ECHO_RECOVERY,
+        *_STUCK_REPLIES,
+        *_EMERGENCY_STUCK_REPLIES,
+        *split_reply_into_clauses(_OUT_OF_SCOPE),
+    }
+    assert expected <= set(tts.calls)
+
+
 class _ScriptedLlm:
     """Same pattern as test_conversation.py's fake - scripted replies, no network."""
 
