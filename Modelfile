@@ -72,7 +72,25 @@ PARAMETER repeat_last_n 128
 #
 # num_ctx 6144 rather than 8192 buys 160 MiB of that headroom for free: at full
 # offload 6144 measured 31.3 tok/s against 8192's 31.9, inside the noise.
-PARAMETER num_gpu 99
+#
+# ...AND IT IS NO LONGER SET HERE. Not a retraction of the 2.2x - that stands -
+# but of hard-coding it, because the precondition above is not the only thing
+# that can go wrong. Current llama.cpp wants ~1 GiB of free VRAM left over and
+# NORMALLY recovers from missing that target by offloading fewer layers. An
+# explicit num_gpu takes the recovery away, measured on this card with an
+# ordinary desktop running:
+#
+#     projected to use 2915 MiB vs 3344 MiB of free device memory
+#     cannot meet free memory target of 1024 MiB, reduce by 595 MiB
+#     failed to fit params: n_gpu_layers already set by user to 99, abort
+#
+# That is a 500 from Ollama on EVERY turn, not a slow turn. Left unset, the
+# same machine loads at a CPU/GPU split and keeps answering.
+#
+# So it is an .env knob now:  LLM_NUM_GPU=99  then rebuild. Take it on a
+# machine whose card is genuinely free - close the Electron apps, confirm
+# `ollama ps` says 100% GPU - and leave it blank on one that is shared.
+# backend/scripts/setup_model.py is what applies it.
 
 # The block that used to sit here said "NO num_gpu setting here, and that is
 # deliberate", directly underneath the line that sets it. It was the old rule,

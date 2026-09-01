@@ -29,6 +29,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from backend.settings import LlmSettings
 import urllib.error
 import urllib.request
 
@@ -39,12 +41,16 @@ OLLAMA_HOST = "http://127.0.0.1:11434"
 
 TARGET_MODEL = "aruvi-base"
 
-# 8192, not 32768: backend/prompt_builder.py sends a ~1.5-2.5k token assembled
-# prompt, so this holds it plus a full call's history with room to spare, while
-# 32768 allocates a KV cache far too large for this hardware (a trivial
-# generation measured 222s at that setting - see LLM_TEST_RESULTS.txt).
-NUM_CTX = 8192
-TEMPERATURE = 0.3
+# READ FROM .env, not restated here. This script is what actually BUILDS the
+# model, and it used to carry its own NUM_CTX = 8192 while both the Modelfile
+# and LLM_NUM_CTX said 6144. The two that were checked against each other
+# agreed; the one that did the building did not - so the model Ollama actually
+# served had a window nothing in the repo claimed, visible only in `ollama ps`.
+# Deriving these removes the drift instead of adding a third guard against it.
+_LLM = LlmSettings()
+NUM_CTX = _LLM.num_ctx
+TEMPERATURE = _LLM.temperature
+NUM_GPU = _LLM.num_gpu
 
 # Best first. Every entry must support OpenAI-style tool calling, because the
 # whole tool layer (backend/tools.py) depends on it - a model without the
@@ -87,15 +93,27 @@ def supports_tools(models: list[dict], name: str) -> bool:
     return False
 
 
+def build_modelfile(base: str) -> str:
+    """The Modelfile this build uses. .env is the only source of truth for it."""
+    lines = [
+        f"FROM {base}",
+        f"PARAMETER num_ctx {NUM_CTX}",
+        f"PARAMETER temperature {TEMPERATURE}",
+    ]
+    # Omitted ENTIRELY when blank, rather than written as some default. An
+    # explicit num_gpu disables llama.cpp's own fit-to-free-VRAM logic
+    # ("n_gpu_layers already set by user to 99, abort"), which turns a machine
+    # that is merely short on VRAM into one that 500s on every single turn.
+    # See LlmSettings.num_gpu for the measurement behind that.
+    if NUM_GPU:
+        lines.append(f"PARAMETER num_gpu {NUM_GPU}")
+    return "\n".join(lines) + "\n"
+
+
 def create_model(base: str) -> None:
-    # Deliberately no num_gpu: forcing a full offload onto the 4GB card wins
-    # on a toy prompt and loses badly on a real one (see the Modelfile).
-    modelfile = (
-        f"FROM {base}\n"
-        f"PARAMETER num_ctx {NUM_CTX}\n"
-        f"PARAMETER temperature {TEMPERATURE}\n"
-    )
-    print(f"Creating {TARGET_MODEL} from {base} (num_ctx={NUM_CTX})...")
+    modelfile = build_modelfile(base)
+    offload = f"num_gpu={NUM_GPU}" if NUM_GPU else "GPU offload chosen by Ollama"
+    print(f"Creating {TARGET_MODEL} from {base} (num_ctx={NUM_CTX}, {offload})...")
 
     # A real file, not `-f -`: passing the Modelfile on stdin is rejected by
     # released Ollama builds ("no Modelfile or safetensors files found").

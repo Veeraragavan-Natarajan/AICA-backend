@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 import json
 import logging
+import os
 from pathlib import Path
 import time
 from uuid import uuid4
 
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from .asr import IndicConformerAsr
@@ -40,14 +42,27 @@ from .telephony import router as telephony_router
 from .tts import SvaraTts, create_tts
 from .vad import TenVadSegmenter, VadUpdate
 
-logging.basicConfig(level=logging.INFO)
+# LOG_LEVEL=DEBUG surfaces the per-clause timing lines; WARNING quiets a
+# production box. An unrecognised value falls back to INFO rather than
+# refusing to start - a typo in a log knob must never cost a deployment.
+#
+# TIMESTAMPED, because the default format is not. Every latency question this
+# project has asked was answered out of this log, and "TTS clause 37 chars:
+# 0.00s synth" three lines under an LLM request tells you nothing about the
+# gap between them without a clock. Millisecond resolution: the things being
+# measured here are tenths of a second apart.
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format=os.getenv("LOG_FORMAT", "%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s"),
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger("aica.audio")
 
 # BACKEND_COMPLETION.md Sec3.4: how often (in VAD hops) to run an interim CTC
 # decode while an utterance is still in progress. 30 hops * 16ms/hop = ~480ms
 # between partial_transcript updates - frequent enough to feel responsive,
 # far below a rate that would make repeated CTC decodes a latency problem.
-PARTIAL_TRANSCRIPT_INTERVAL_FRAMES = 30
+PARTIAL_TRANSCRIPT_INTERVAL_FRAMES = int(os.getenv("ASR_PARTIAL_INTERVAL_FRAMES", "30"))
 
 # How many clauses may be mid-synthesis at once. The audible gap between the
 # agent's sentences was one whole synthesis round-trip, because each clause was
@@ -57,7 +72,7 @@ PARTIAL_TRANSCRIPT_INTERVAL_FRAMES = 30
 # still in flight hides all but the first of those behind audio the caller is
 # already hearing. Real concurrency is still bounded by the TTS semaphore; this
 # only decides how far ahead of playback we are willing to queue work.
-SYNTH_LOOKAHEAD = 3
+SYNTH_LOOKAHEAD = int(os.getenv("TTS_SYNTH_LOOKAHEAD", "3"))
 
 # Sent once per turn when TTS is unavailable. The React dashboard matches on
 # this exact string to collapse the repeat into a single banner instead of one
@@ -189,6 +204,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AICA Audio Pipeline", lifespan=lifespan)
+
+# Added at import time, not in lifespan(): Starlette builds its middleware stack
+# on the first request, and a middleware appended after that is silently ignored.
+# Read here rather than from app.state.security, which does not exist yet.
+_cors_origins = SecuritySettings().cors_allow_origins
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(_cors_origins),
+        allow_credentials="*" not in _cors_origins,  # the browser forbids both
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
 # BACKEND_COMPLETION.md Sec3.3: telephony ingress is a separate router (its
 # own file, its own tests) sharing this app's lifespan-loaded app.state.* -
 # see backend/telephony.py's module docstring.

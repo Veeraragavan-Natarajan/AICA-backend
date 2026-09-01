@@ -30,6 +30,41 @@ cd "$ROOT_DIR"
 
 VENV_DIR="$ROOT_DIR/.venv"
 LOG_DIR="$ROOT_DIR/logs"
+
+# ------------------------------------------------------------------ .env ----
+# Seeded and loaded HERE, before anything below reads a variable out of it.
+# backend/__init__.py loads .env for the PYTHON process, but this shell needs
+# it too: BACKEND_PORT, BACKEND_HOST, LLM_MODEL and OLLAMA_URL are all read by
+# this script, and a .env only the app could see meant setting LLM_MODEL there
+# while run.sh went on pulling and building the default one.
+#
+# Parsed line by line rather than sourced: a .env is data, and sourcing it
+# executes it. An unquoted value with a space in it - a comma-separated
+# CORS_ALLOW_ORIGINS is the realistic one - would run its second word as a
+# command. A variable already exported into this shell still wins over the
+# file, so `BACKEND_PORT=9000 ./run.sh` keeps working, matching dotenv.
+if [[ ! -f "$ROOT_DIR/.env" && -f "$ROOT_DIR/.env.example" ]]; then
+  cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+  printf '\033[36m==>\033[0m %s\n' "Created .env from .env.example"
+  printf '\033[33m !\033[0m %s\n' "Set HF_TOKEN in .env for the microphone (the ASR model is gated)." >&2
+  printf '\033[33m !\033[0m %s\n' "  Without it the server still runs and /console's typed turns work." >&2
+fi
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"                                    # CRLF-safe
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    env_key="${BASH_REMATCH[2]}"
+    env_value="${BASH_REMATCH[3]}"
+    env_value="${env_value%"${env_value##*[![:space:]]}"}"  # trailing space
+    case "$env_value" in
+      \"*\"|\'*\') env_value="${env_value:1:${#env_value}-2}" ;;
+    esac
+    [[ -n "${!env_key+set}" ]] || export "$env_key=$env_value"
+  done < "$ROOT_DIR/.env"
+  unset env_key env_value line
+fi
+
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 # logs/server.log for the default port, because that path is what HANDOFF.md
 # and every debugging note refer to. A second instance on another port gets its
@@ -126,18 +161,6 @@ if ! "$PY" -c "import nemo.collections.asr" >/dev/null 2>&1; then
   fi
 fi
 
-# ------------------------------------------------------------------ .env ----
-# settings.py loads .env however the app is started, and the ASR model is
-# gated, so a fresh machine needs somewhere to put HF_TOKEN. Seeded from the
-# example rather than written from scratch: the example carries the comments
-# explaining what each knob costs.
-if [[ ! -f "$ROOT_DIR/.env" && -f "$ROOT_DIR/.env.example" ]]; then
-  cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
-  say "Created .env from .env.example"
-  warn "Set HF_TOKEN in .env for the microphone (the ASR model is gated)."
-  warn "  Without it the server still runs and /console's typed turns work."
-fi
-
 # ---------------------------------------------------------------- ollama ----
 # The agent is useless without the LLM, so all of this happens before the
 # server starts rather than surfacing later as a failed turn.
@@ -190,27 +213,35 @@ if [[ -z "${SKIP_OLLAMA:-}" ]] && ollama_up; then
       say "Pulling the base model $BASE_MODEL (one time, a few GB)"
       ollama pull "$BASE_MODEL"
     fi
-    say "Building $MODEL_NAME from Modelfile (one time)"
-    ollama create "$MODEL_NAME" -f "$ROOT_DIR/Modelfile"
+    # Built through setup_model.py rather than `ollama create -f Modelfile`,
+    # so there is ONE build path. There used to be two, and they disagreed:
+    # this line pinned num_ctx from the Modelfile while setup_model.py pinned
+    # its own 8192, and whichever had been run last decided what Ollama really
+    # served. Both now read LLM_NUM_CTX / LLM_NUM_GPU out of .env.
+    say "Building $MODEL_NAME (one time)"
+    "$PY" -m backend.scripts.setup_model
   else
     warn "$MODEL_NAME is not in Ollama and the 'ollama' CLI is not on PATH."
     warn "  ollama create $MODEL_NAME -f Modelfile"
   fi
 
-  # THE VRAM PRECONDITION, which is not self-enforcing. The Modelfile ships
-  # PARAMETER num_gpu 99 because full offload measured 2.2x (31.3 vs 12.9
-  # tok/s). That is only true while the card is free: with ~1.2 GB held by
-  # desktop apps the weights fit and the weights PLUS the KV cache did not, and
-  # Windows WDDM does not fail that allocation - it spills to system RAM over
-  # PCIe, silently, and one turn measured 114 SECONDS.
-  if command -v nvidia-smi >/dev/null 2>&1 \
+  # THE VRAM PRECONDITION, which is not self-enforcing. Full offload measured
+  # 2.2x (31.3 vs 12.9 tok/s), and that is only true while the card is free:
+  # with ~1.2 GB held by desktop apps the weights fit and the weights PLUS the
+  # KV cache did not, and Windows WDDM does not fail that allocation - it
+  # spills to system RAM over PCIe, silently, and one turn measured 114s.
+  #
+  # Only worth warning about when LLM_NUM_GPU is set. Left blank (the default)
+  # llama.cpp fits the model to whatever is free and the failure mode is a
+  # slower split, not a stall - see LLM_NUM_GPU in .env.example.
+  if [[ -n "${LLM_NUM_GPU:-}" ]] && command -v nvidia-smi >/dev/null 2>&1 \
      && ! ollama ps 2>/dev/null | grep -q "$MODEL_NAME"; then
     FREE_MIB="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null \
                 | head -1 | tr -dc '0-9')"
     if [[ -n "${FREE_MIB:-}" ]] && (( FREE_MIB < 3400 )); then
-      warn "Only ${FREE_MIB} MiB of VRAM free; $MODEL_NAME needs ~3300 to stay fully on the GPU."
-      warn "  Close other GPU apps first, or a turn can take 100s+ with no error."
-      warn "  Verify after the first turn: ollama ps must read 100% GPU."
+      warn "Only ${FREE_MIB} MiB of VRAM free and LLM_NUM_GPU=$LLM_NUM_GPU is forcing full offload."
+      warn "  Close other GPU apps, or blank LLM_NUM_GPU in .env and rebuild the model."
+      warn "  Forced offload that does not fit is a 500 on every turn, not a slow turn."
     fi
   fi
 elif [[ -z "${SKIP_OLLAMA:-}" ]]; then

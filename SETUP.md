@@ -35,6 +35,28 @@ cp .env.example .env
 uvicorn backend.main:app --reload    # starts the backend on :8000
 ```
 
+## Configuration — all of it is in `.env`
+
+`.env.example` is the complete list of knobs: server host/port, log level and
+format, CORS origins, the WebSocket auth token, every LLM/TTS/ASR/VAD/barge-in
+parameter, the call-log path and its encryption key, and the `OLLAMA_*` vars
+that must reach the Ollama process. Each is commented at its shipped default
+with the measurement behind it. Copy the file, uncomment what you need; nothing
+should require a code edit.
+
+`run.sh` parses `.env` for the shell as well, so `BACKEND_PORT`, `LLM_MODEL`
+and `LLM_NUM_GPU` reach the model build and the Ollama process — not just the
+Python app. A variable already exported in your shell wins over the file.
+
+Most knobs need only a server restart. `LLM_NUM_CTX`, `LLM_NUM_GPU` and
+`LLM_TEMPERATURE` are baked into the Ollama model, so rerun
+`python -m backend.scripts.setup_model` after changing those.
+
+`backend/test_env_coverage.py` fails if a setting exists that `.env.example`
+does not document, if `.env.example` documents one nothing reads, or if your
+own `.env` sets a key that matches no setting — a typo'd key is otherwise
+completely silent.
+
 **What can't be scripted:** a Hugging Face token for the gated ASR model
 (`ai4bharat/indicconformer_stt_ta_hybrid_ctc_rnnt_large`). It's tied to your personal
 HF account and a license you have to accept yourself:
@@ -48,10 +70,6 @@ model in `LLM_MODEL` already pulled (`ollama pull <tag>`).
 
 `./run.sh` does all of the above in one command - see README.md. The rest of this file
 is the manual walkthrough, for when you need to change something in the middle of it.
-
-The older description of `run.sh` follows: it starts
-this backend plus [`legacy_test_client/`](legacy_test_client/), a minimal static HTML/JS
-page for exercising `/ws/audio` directly without the React dashboard.
 
 ---
 
@@ -107,13 +125,18 @@ the verified default. Build it with the pinned context:
 
 ```bash
 ollama pull qwen3:4b-instruct-2507-q4_K_M
-python -m backend.scripts.setup_model     # creates aruvi-base, num_ctx 8192, from the
-                                          # best base you actually have installed
+python -m backend.scripts.setup_model     # creates aruvi-base from the best base you
+                                          # actually have installed, using LLM_NUM_CTX,
+                                          # LLM_TEMPERATURE and LLM_NUM_GPU from .env
 # .env already says LLM_MODEL=aruvi-base
-
-# Equivalent by hand, if you prefer:
-#   ollama create aruvi-base -f Modelfile
 ```
+
+This is the **only** build path — `run.sh` calls the same script. It used to be
+one of two, and they disagreed: the script pinned its own `num_ctx 8192` while
+the Modelfile and `LLM_NUM_CTX` both said 6144, so whichever had been run last
+decided what Ollama really served. Rerun it after changing `LLM_NUM_CTX`,
+`LLM_NUM_GPU` or `LLM_TEMPERATURE` — those are baked into the model, and a
+restart alone will not pick them up.
 
 > **Latency warning:** on CPU this measures ~3.6 tok/s, i.e. minutes per turn — fine
 > for evals, unusable for a live voice call. GPU offload is required for real use.
@@ -272,8 +295,36 @@ Quantising the KV cache to q8_0 halves it **without losing any context**:
 | default (f16 KV) | 16.6 tok/s, 58% of the model in VRAM |
 | flash attention + q8_0 KV | 27.2 tok/s, 67% in VRAM |
 
-**Do not add `PARAMETER num_gpu 99`.** Forcing every layer onto the card looks
-~2x faster when measured with a short prompt and is catastrophic with the real
-~2.7k-token one: the weights fit but the weights plus a real KV cache do not,
-and Windows spills the difference to system RAM over PCIe. One turn measured
-**114 seconds**. Tune this only against a realistic prompt.
+### Full GPU offload — `LLM_NUM_GPU`, and why it is off by default
+
+This section used to read "**Do not add `PARAMETER num_gpu 99`**", on the
+strength of a turn that measured **114 seconds**. That measurement was real but
+its precondition was not recorded: ~1.2GB of the card was held by desktop apps
+at the time, so the weights fit and the weights **plus** the KV cache did not,
+and Windows WDDM spills the difference to system RAM over PCIe rather than
+failing. With the card actually free, full offload measures **2.2x** — the
+largest latency win on this project:
+
+| | generation | prompt+reply |
+|---|---|---|
+| auto-fit (default, 22%/78% CPU/GPU) | 14.8 tok/s | 4.57s |
+| `LLM_NUM_GPU=99` (100% GPU) | **34.4 tok/s** | **1.98s** |
+
+It is still **off by default**, for a second reason found since. Current
+llama.cpp keeps a ~1 GiB free-VRAM target and normally recovers from missing it
+by offloading fewer layers; an explicit `num_gpu` removes that recovery:
+
+```
+projected to use 2915 MiB vs 3344 MiB of free device memory
+cannot meet free memory target of 1024 MiB, reduce by 595 MiB
+failed to fit params: n_gpu_layers already set by user to 99, abort
+```
+
+The model then never loads and **every turn returns HTTP 500** — not a slow
+turn. Blank, the same machine runs at a CPU/GPU split and keeps answering.
+
+So: set `LLM_NUM_GPU=99` in `.env` and rerun `setup_model` on a machine whose
+card is genuinely free (close the Electron apps first), confirm `ollama ps`
+reads `100% GPU`, and blank it again the moment it 500s. Tune only against a
+realistic prompt — `backend/scripts/bench_ctx.py` assembles the real one; a
+short prompt measured 34.5 vs 16.6 tok/s while the real one took 114 seconds.

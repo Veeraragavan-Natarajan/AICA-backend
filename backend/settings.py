@@ -13,8 +13,19 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# .env (gitignored) holds HF_TOKEN and any overrides below. Loaded here so it
-# applies however the app is started - run.sh, bare uvicorn, or a test import.
+# .env (gitignored) holds HF_TOKEN and every override in this file - see
+# .env.example, which documents all of them.
+#
+# The load that MATTERS is in backend/__init__.py, not here. This module is not
+# the first thing imported: clause_chunker, conversation and main all have
+# module-level os.getenv() calls that run at IMPORT time, and main.py imports
+# them before it imports this file - so a .env loaded here would arrive after
+# they had already read their defaults. Loading from the package root fixes
+# that for every module at once.
+#
+# Kept anyway, and it is a no-op in the normal path: load_dotenv does not
+# override a name already in the environment, so this only ever matters if
+# settings.py is somehow reached without backend/__init__.py having run.
 load_dotenv()
 
 
@@ -236,9 +247,36 @@ class LlmSettings:
     # and fails if they disagree.
     num_ctx: int = int(os.getenv("LLM_NUM_CTX", "6144"))
 
+    # GPU OFFLOAD, as a layer count. Applied when the model is BUILT
+    # (backend/scripts/setup_model.py), not per request - Ollama reads it from
+    # the model's own parameters.
+    #
+    # Blank (the default) means "let llama.cpp decide", and that is not
+    # timidity, it is a measured failure. `num_gpu 99` forces every layer onto
+    # the card and measured 2.2x on a QUIET one (12.9 -> 31.3 tok/s, the
+    # largest latency win on this project). But llama.cpp reserves ~1 GiB of
+    # free VRAM, and when the projection misses that target it normally
+    # RECOVERS by offloading fewer layers. An explicit num_gpu takes that
+    # recovery away:
+    #
+    #     projected to use 2915 MiB vs 3344 MiB of free device memory
+    #     cannot meet free memory target of 1024 MiB, reduce by 595 MiB
+    #     failed to fit params: n_gpu_layers already set by user to 99, abort
+    #
+    # That is a 500 from Ollama on EVERY turn, not a slow turn - measured on
+    # this 4 GB card with an ordinary desktop running. Auto-fit degrades to a
+    # CPU/GPU split instead, which is slower and alive.
+    #
+    # Set LLM_NUM_GPU=99 to take the 2.2x back on a machine whose card is
+    # genuinely free (close the Electron apps first, check `ollama ps` says
+    # 100% GPU), and rebuild the model afterwards.
+    num_gpu: str = os.getenv("LLM_NUM_GPU", "").strip()
+
     def __post_init__(self) -> None:
         if not self.model:
             raise ValueError("LLM_MODEL must not be empty")
+        if self.num_gpu and not self.num_gpu.isdigit():
+            raise ValueError(f"LLM_NUM_GPU must be a layer count or blank, got {self.num_gpu!r}")
         if not 0.0 <= self.temperature <= 2.0:
             raise ValueError("LLM_TEMPERATURE must be between 0 and 2")
         if self.max_tokens <= 0:
@@ -426,6 +464,28 @@ class SecuritySettings:
     """
 
     ws_auth_token: str = os.getenv("AUDIO_WS_AUTH_TOKEN", "")
+
+    # Browser origins allowed to call the /api/* routes. The React dashboard is
+    # served from its OWN origin (a Vite dev server, or a static host in
+    # production), so without this its fetch of /api/health and /api/calls is
+    # blocked by the browser and the whole dashboard reads as "backend down".
+    # The /console page is exempt by construction - it is served BY this app,
+    # so it is same-origin and never involves CORS.
+    #
+    # Comma-separated, e.g. "http://localhost:5173,https://aruvi.example.com".
+    # "*" is accepted for a closed network but is NOT the default: it would let
+    # any page on the internet a staff browser happens to open read the call
+    # log, which is patient data. Blank means no cross-origin caller is allowed
+    # at all, which is correct for a console-only deployment.
+    #
+    # This does NOT gate /ws/audio. WebSocket handshakes are exempt from CORS
+    # in every browser, so the socket's gate is AUDIO_WS_AUTH_TOKEN above -
+    # setting one without the other leaves the audio path open.
+    cors_allow_origins: tuple[str, ...] = tuple(
+        origin.strip()
+        for origin in os.getenv("CORS_ALLOW_ORIGINS", "").split(",")
+        if origin.strip()
+    )
 
 
 @dataclass(frozen=True)

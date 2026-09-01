@@ -27,6 +27,7 @@ import asyncio
 from dataclasses import dataclass, field
 import json
 import logging
+import os
 import re
 
 from .clause_chunker import ClauseChunker
@@ -775,7 +776,7 @@ class ConversationManager:
 #
 # ponytail: a flat cap, not summarisation. It is now the CHEAP half of the
 # bound - _history_budget_chars() below is the half that actually holds.
-MAX_HISTORY_MESSAGES = 24
+MAX_HISTORY_MESSAGES = int(os.getenv("CONVERSATION_MAX_HISTORY_MESSAGES", "24"))
 
 
 # Counting messages cannot see the failure it was added to prevent, and this is

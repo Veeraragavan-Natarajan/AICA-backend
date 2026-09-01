@@ -9,6 +9,7 @@ reshaping this class.
 
 from __future__ import annotations
 
+import os
 import re
 
 # Guards against splitting mid-abbreviation ("Dr. Ramanathan") - a naive
@@ -41,7 +42,12 @@ _FIRST_CHUNK_BOUNDARY_RE = re.compile(r"[.!?,;—]+\s+")
 # ...and failing any punctuation at all, break at a word boundary once the
 # opening has run this long. A model that opens with a long comma-less clause
 # would otherwise still hold the audio.
-FIRST_CHUNK_MAX_CHARS = 32
+#
+# Measured (HANDOFF.md Sec6b): 32 -> 24 -> 18 changed NOTHING (2.38/2.43/2.43s
+# to first clause) because the model's opening sentence ends at a period long
+# before this cap applies. At 12 it finally moved (2.37 -> 1.89s) and did it by
+# cutting mid-phrase, dropping the honorific. Lower it only with a stopwatch.
+FIRST_CHUNK_MAX_CHARS = int(os.getenv("LLM_FIRST_CHUNK_MAX_CHARS", "32"))
 
 
 class ClauseChunker:

@@ -361,6 +361,40 @@ def test_llm_num_ctx_matches_the_modelfile() -> None:
     assert LlmSettings().num_ctx == _modelfile_num_ctx()
 
 
+def test_the_script_that_builds_the_model_agrees_with_the_modelfile() -> None:
+    """The third statement of that number, and the one that had drifted.
+
+    setup_model.py is what actually runs `ollama create`, and it carried its
+    own NUM_CTX = 8192 while the Modelfile and LLM_NUM_CTX both said 6144. The
+    two that were checked against each other agreed, so the guard above passed
+    while the model Ollama really served had a window nothing in the repo
+    claimed - visible only by reading `ollama ps` by hand.
+
+    num_gpu is checked in the same breath and for the same reason: an explicit
+    one disables llama.cpp's fit-to-free-VRAM recovery, so a Modelfile and a
+    build script disagreeing about it is the difference between a working
+    server and one that 500s on every turn.
+    """
+    from pathlib import Path
+    import re
+
+    from .scripts.setup_model import build_modelfile
+
+    built = build_modelfile("some-base:tag")
+    modelfile = (Path(__file__).resolve().parent.parent / "Modelfile").read_text(encoding="utf-8")
+
+    def parameter(text: str, name: str) -> str | None:
+        match = re.search(rf"^PARAMETER\s+{name}\s+(\S+)", text, re.MULTILINE)
+        return match.group(1) if match else None
+
+    for name in ("num_ctx", "num_gpu"):
+        assert parameter(built, name) == parameter(modelfile, name), (
+            f"{name}: setup_model.py builds {parameter(built, name)!r} but the "
+            f"Modelfile documents {parameter(modelfile, name)!r}. The build "
+            "script wins at runtime, so the Modelfile is the one that lies."
+        )
+
+
 def test_a_call_of_long_turns_never_overflows_num_ctx() -> None:
     """The bound that message-counting cannot provide, driven end to end.
 

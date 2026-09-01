@@ -14,9 +14,6 @@ backend/            FastAPI WebSocket application (this directory)
   main.py           PCM WebSocket, VAD events, and ASR worker
   vad.py            TEN VAD speech segmentation
   asr.py            AI4Bharat IndicConformer transcription adapter (NeMo)
-../legacy_test_client/  Static call-agent interface (predates the React frontend)
-  index.html        Call interface and microphone permission flow
-  audio-stream.js   16 kHz signed-16-bit PCM WebSocket client
 ../assets/           Project reference assets
   LLM-Flow.png      Call-processing flow diagram
 ../requirements.txt  Python dependencies
@@ -72,21 +69,6 @@ uvicorn backend.main:app --reload
 
 The audio WebSocket is available at `ws://localhost:8000/ws/audio`.
 
-## Open the legacy static test client
-
-This is a minimal pre-React test page, superseded by the real frontend's
-**Simulation & Testing → Run simulation** panel - useful only for testing the backend's
-`/ws/audio` contract in isolation. Serve the `legacy_test_client` directory (from the
-repo root) over localhost or HTTPS, then open its URL in a browser. This is required for
-reliable microphone access.
-
-```powershell
-cd legacy_test_client
-py -m http.server 5500
-```
-
-Open `http://localhost:5500`, enable the microphone, and choose **Answer with AICA** to begin streaming browser audio to the FastAPI endpoint.
-
 ## Audio pipeline
 
 The browser resamples microphone input to mono 16 kHz `pcm_s16le`. 16 kHz is fixed: both TEN VAD and IndicConformer are trained on it.
@@ -113,3 +95,13 @@ The room-noise floor is learned continuously while the call is idle. TEN VAD, su
 Transcripts are sent to the browser in the language's own script - Tamil speech arrives as Tamil text. There is no romanization ("Tanglish"/"Hinglish") step: it cost a dependency and a per-utterance conversion to make the output *less* faithful than what the model already produces.
 
 Server defaults come from the table above; all of them are read from the environment in [backend/settings.py](backend/settings.py).
+
+The table is a subset. **[`.env.example`](../.env.example) is the complete list** of
+every knob this backend has - server binding, log level and format, CORS origins,
+the WebSocket auth token, LLM/TTS/ASR/VAD/barge-in parameters, the call-log path
+and its encryption key, and the `OLLAMA_*` variables - each commented at its
+shipped default with the measurement behind it. `.env` is loaded by
+[`backend/__init__.py`](__init__.py) at package import, so it is in place before
+any module-level `os.getenv` runs, and `run.sh` parses the same file for the
+shell. [`test_env_coverage.py`](test_env_coverage.py) fails if the two ever
+drift apart in either direction.

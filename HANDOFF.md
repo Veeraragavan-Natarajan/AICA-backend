@@ -68,6 +68,28 @@ evidence that ASR, the LLM or TTS is usable.
 **The server caches prompts and code at startup.** Restart it after editing
 `golden/runtime_core.txt`, `golden/flow_exemplars.json`, or any `backend/*.py`.
 
+### Configuration lives in `.env`, and only in `.env`
+
+Every knob this system has is in **`.env.example`**, commented at its shipped
+default with the measurement behind it. Copy it to `.env` and uncomment what
+you need — nothing here should require a code edit.
+
+Both halves read it: `backend/__init__.py` loads it for the Python process
+(from the package root, so it is in place before any module-level `os.getenv`
+runs), and `run.sh` parses it for the shell, so `BACKEND_PORT`, `LLM_MODEL`,
+`LLM_NUM_GPU` and the `OLLAMA_*` vars reach the model build and the Ollama
+process too. A variable already exported in your shell still wins.
+
+Four tests in `backend/test_env_coverage.py` keep that promise honest: every
+`os.getenv` in the package and every `${VAR:-...}` in `run.sh` must appear in
+`.env.example`, nothing may be documented that no longer exists, and a key
+in your `.env` that matches no setting fails rather than being silently
+ignored. Add a knob, document it, or the suite goes red.
+
+Knobs that need a rebuild rather than a restart: `LLM_NUM_CTX`, `LLM_NUM_GPU`,
+`LLM_TEMPERATURE` — they are baked into the Ollama model by
+`python -m backend.scripts.setup_model`.
+
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
   Where-Object { $_.CommandLine -like '*uvicorn*' } |
@@ -110,12 +132,34 @@ Close those apps and there are 3764 MiB free. Re-measured against real
 **2.2x — the largest latency win measured on this project.** See
 LLM_TEST_RESULTS.txt Part 10.
 
+- **`num_gpu` is now an `.env` knob (`LLM_NUM_GPU`), blank by default, and the
+  2.2x above is what you turn ON.** The measurement stands; hard-coding it does
+  not. Current llama.cpp keeps a ~1 GiB free-VRAM target and normally recovers
+  from missing it by offloading fewer layers — an explicit `num_gpu` removes
+  that recovery. Measured on this box with an ordinary desktop running:
+
+      projected to use 2915 MiB vs 3344 MiB of free device memory
+      cannot meet free memory target of 1024 MiB, reduce by 595 MiB
+      failed to fit params: n_gpu_layers already set by user to 99, abort
+
+  That is `HTTP 500` from Ollama on **every turn** — the model never loads at
+  all — not a slow turn. Reproduced twice. Blank, the same machine loads at
+  22%/78% CPU/GPU and keeps answering. So: set `LLM_NUM_GPU=99` and rebuild
+  (`python -m backend.scripts.setup_model`) on a machine whose card is
+  genuinely free, confirm with `ollama ps`, and leave it blank on a shared one.
 - **The VRAM precondition is not optional and not self-enforcing.** At
-  `num_ctx 6144` this leaves ~500 MiB free. `num_ctx 8192` leaves 339 MiB,
-  which is too little for the browser a tester is about to open. If something
-  takes the card, the 114s spill comes back and it is *silent* — check
-  `nvidia-smi` before blaming the model. To revert, delete the `PARAMETER` from
-  the Modelfile and rebuild; nothing else depends on it.
+  `num_ctx 6144` full offload leaves ~500 MiB free. `num_ctx 8192` leaves 339
+  MiB, too little for the browser a tester is about to open. If something takes
+  the card, you get either the silent 114s spill or the hard 500 above.
+- **There is now ONE build path**, and there used to be two that disagreed.
+  `run.sh` and the manual route both go through
+  `backend/scripts/setup_model.py`, which reads `LLM_NUM_CTX` / `LLM_NUM_GPU`
+  out of `.env`. The script previously carried its own `NUM_CTX = 8192` while
+  the Modelfile and `LLM_NUM_CTX` both said 6144 — and the script is what runs
+  `ollama create`, so the model Ollama actually served had a window nothing in
+  the repo claimed. The existing Modelfile/settings test passed the whole time,
+  because it compared the two that agreed.
+  `test_the_script_that_builds_the_model_agrees_with_the_modelfile` closes it.
 - Benchmark only against real `PromptBuilder` output; a short prompt will lie
   to you. That part of the old warning was always right.
 - The ASR still runs on CPU: the installed torch has no CUDA support, and there
@@ -143,18 +187,38 @@ invisible in every server-side metric.
 
 ## 4. WHERE THE LATENCY IS — measured end to end over the real socket
 
-| | |
-|---|---|
-| Greeting, fully delivered | **0.08s** (TTS cache) |
-| First clause of a reply | **1.3 – 2.6s** |
-| Whole turn spoken | 5 – 10s |
+**Every number here is a function of the CPU/GPU split, so read §3 first and
+check `ollama ps` before comparing anything to it.** Re-measured over the real
+socket at the shipping default (`LLM_NUM_GPU` blank → 22%/78% CPU/GPU):
 
-The first clause is the number that matters — the caller hears speech while the
-model is still generating the rest.
+| | 22%/78% split (default) | 100% GPU (`LLM_NUM_GPU=99`, free card) |
+|---|---|---|
+| Greeting, fully delivered | **0.05s** (TTS cache) | 0.05s |
+| First audio, turns 2+ | **4.1 – 4.9s** | ~2.0s |
+| First audio, turn 1 of a call | **~24s** | ~10s |
+| Generation rate (`bench_ctx`) | **14.8 tok/s** | **34.4 tok/s** |
+| Whole prompt+reply (`bench_ctx`) | **4.57s** | **1.98s** |
 
-Turn one of a freshly started server costs ~10s once while Ollama loads the
-model into VRAM. That is a cold-start cost, gone by the second call, and
-`OLLAMA_KEEP_ALIVE=-1` now stops it recurring mid-session.
+The 2.3x between the columns is the offload, and it is the only lever of that
+size on this box. Everything else measured here is within noise of it.
+
+**The server itself adds essentially nothing.** A warm turn's 4.1–4.9s to first
+audio sits against `bench_ctx`'s 4.57s for the same prompt straight at Ollama —
+VAD, ASR, clause chunking, TTS and the socket are all inside the rounding.
+TTS per clause logs `0.00s synth` on any cached line.
+
+**Turn 1 of a call is dominated by COLD PROMPT EVAL, not by model loading.**
+`_system_prompt_for()`'s docstring has the mechanism: Ollama's prefix cache
+gives 36 ms on an identical prefix and **28,895 ms** when a word near the top
+changes. The first caller turn is exactly when that happens — the intent router
+picks a playbook and swaps it into the prompt. The `prewarm` fired at
+`call_started` covers **84.6%** of the resulting prompt (8782 of 10375 chars);
+the flow-specific tail is re-evaluated. Shortening that tail, or moving it
+after the stable block, is the remaining structural win — and it is a prompt
+change, so read LLM_STACK.md §6 before attempting it.
+
+Turn one of a freshly *started server* additionally pays the model load into
+VRAM. `OLLAMA_KEEP_ALIVE=-1` stops that recurring mid-session.
 
 ---
 
