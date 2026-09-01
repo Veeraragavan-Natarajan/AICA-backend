@@ -24,6 +24,26 @@ FROM qwen3:4b-instruct-2507-q4_K_M
 PARAMETER num_ctx 6144
 PARAMETER temperature 0.3
 
+# ANTI-LOOP. Observed live, twice in one call: the model emitted one Tamil word
+# twelve and then twenty-two times running ("உங்க முழு முழு முழு முழு ...") and
+# the caller heard all of it. backend/conversation.py now refuses to SPEAK a
+# looping clause, which is the guarantee; this is the cheaper half that stops
+# the loop being generated in the first place, so the turn produces an answer
+# instead of a recovery line.
+#
+# Set HERE and not from backend/llm.py, which is the trap this comment exists
+# to flag: Ollama's OpenAI-compatible endpoint maps `frequency_penalty` onto
+# repeat_penalty, whose scale is INVERTED relative to OpenAI's. The idiomatic
+# OpenAI value of 0.3 would arrive as repeat_penalty 0.3 - a strong reward for
+# repeating - and make this failure much worse. Measured on this server: at
+# frequency_penalty 0.1 the model repeated one token for the whole completion.
+#
+# repeat_last_n 128 rather than Ollama's default 64 because a Tamil word is
+# several tokens, so 64 remembers only about a dozen words - less than one turn
+# of this agent's output (LLM_MAX_TOKENS is 160).
+PARAMETER repeat_penalty 1.15
+PARAMETER repeat_last_n 128
+
 # FULL GPU OFFLOAD. This was forbidden for most of this project's life and the
 # reversal is a MEASUREMENT, not a change of mind - re-read before touching it.
 #

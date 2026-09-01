@@ -101,7 +101,23 @@ _ENGLISH_WORDS: dict[str, str] = {
     "நியூராலஜி": "Neurology",
     "ஆர்த்தோ": "Ortho",
     "பீடியாட்ரிக்": "Paediatrics",
+    # Observed live over the microphone, not through the TTS round-trip, and
+    # the difference matters: the generated lexicon below learned "ambulance"
+    # as "அண்டிலின்ஸ்" because that is what the ASR does to the TTS voice
+    # saying it. A person saying it produces none of these forms, so an
+    # emergency caller's word for "ambulance" reached prompt_builder.py's
+    # EMERGENCY trigger table still in Tamil script and matched nothing at all.
+    # Three spellings because three consecutive turns of one call produced
+    # three (the ASR flips ல/லா and அ/ஆ here the way it flips ண/ன elsewhere).
+    "அம்புலான்ஸ்": "ambulance",
+    "அம்புலன்ஸ்": "ambulance",
+    "ஆம்புலன்ஸ்": "ambulance",
+    "ஹாஸ்பிட்டல்": "hospital",
+    "ப்ரீ": "free",
 }
+
+# Generated entries shorter than this are dropped. See the merge below.
+_MIN_GENERATED_KEY_LEN = 6
 
 # Generated coverage, merged UNDER the table above.
 #
@@ -127,6 +143,31 @@ _ENGLISH_WORDS: dict[str, str] = {
 # The hand table wins every conflict: these entries can only add coverage, and
 # a missing or malformed file simply means the hand table alone, which is
 # exactly the behaviour before this existed.
+#
+# PROPERTY 2 IS NOT ENOUGH ON ITS OWN, and _MIN_GENERATED_KEY_LEN is what makes
+# up the difference. golden/ is a hospital prompt, not a Tamil dictionary, so a
+# generated form only has to avoid the few thousand words that happen to appear
+# in it. Auditing the 771 shipped entries found ordinary Tamil among the short
+# ones, mapped to English words it has nothing to do with:
+#
+#     கீழ்  -> keep      (கீழ் is "below")
+#     சூழ்  -> phone     (சூழ் is "surround")
+#     காபி  -> copy      (காபி is "coffee")
+#     கேரளா -> care      (கேரளா is "Kerala")
+#     சாய்  -> sign      (சாய் is "lean")
+#     நம்ப  -> number    (நம்ப is "believe" - "நம்ப முடியல" became "number முடியல")
+#
+# Every one of those corrupts the transcript the model then has to answer,
+# which is the failure this module's docstring calls "far worse than leaving
+# one English word transliterated". They cluster at the short end because a
+# real transliteration of an English word is LONG in Tamil script -
+# "appointment" is அப்பாயின்ட்மெண்ட், fourteen characters. Below six there is
+# not room for an English word and there is room for a Tamil one.
+#
+# Six drops 154 of 771 (19%) and costs almost nothing real: the short English
+# words a caller actually says at a hospital desk - bill, book, test, scan,
+# slot - are all in the hand-measured table above, which this threshold does
+# not touch.
 _LEXICON_PATH = pathlib.Path(__file__).resolve().parent.parent / "golden" / "asr_lexicon.json"
 
 
@@ -145,7 +186,7 @@ def _load_generated_lexicon() -> dict[str, str]:
     return {k: v for k, v in entries.items() if isinstance(k, str) and isinstance(v, str) and k and v}
 
 
-_GENERATED = _load_generated_lexicon()
+_GENERATED = {k: v for k, v in _load_generated_lexicon().items() if len(k) >= _MIN_GENERATED_KEY_LEN}
 if _GENERATED:
     # Hand table last: a measured entry always beats a generated one.
     _ENGLISH_WORDS = {**_GENERATED, **_ENGLISH_WORDS}

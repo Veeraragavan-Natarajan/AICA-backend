@@ -101,6 +101,18 @@
       "சரி சார். Verification-க்கு appointment ID இல்ல mobile number சொல்லுங்க."
     ],
     [
+      "note",
+      "a caller often asks back whether the identifier they DO have (MRN, name) counts, instead of giving the one you asked for. Answer their yes/no directly, then restate what you actually need"
+    ],
+    [
+      "caller",
+      "பேரு Arunkumar. MRN தேவையா?"
+    ],
+    [
+      "agent",
+      "MRN தேவையில்ல சார். Appointment ID இல்ல mobile number மட்டும் சொல்லுங்க."
+    ],
+    [
       "caller",
       "APT-52943."
     ],
@@ -119,24 +131,24 @@
   ],
   "appointment.confirm": [
     [
-      "agent",
-      "மேடம், நாளைக்கு உங்களுக்கு Dr. Anand-கிட்ட காலை 8:15-க்கு appointment இருக்கு. அதை confirm பண்றதுக்காக call பண்ணேன்."
+      "note",
+      "this is almost always the CALLER checking, not the hospital calling out - you do not have their appointment details yet. Ask for a mobile number or MRN to look it up FIRST, never 'which doctor' - the caller cannot answer that, and asking it twice in different words is still asking it twice"
     ],
     [
       "caller",
-      "ஆமாம் ஞாபகம் இருக்கு."
+      "நாளைக்கு எனக்கு appointment இருக்கான்னு ஒரு தடவை confirm பண்ணி சொல்லுறீங்களா?"
     ],
     [
       "agent",
-      "ஆமாம் மேடம். Security-க்காக ஒரு verification — உங்க date of birth சொல்லுங்களா?"
+      "கண்டிப்பா மேடம். Registered mobile number இல்ல MRN சொல்லுங்க."
     ],
     [
       "caller",
-      "1978, மார்ச் 3. ஆனா அந்த blood test fasting-ஆ வரணுமா?"
+      "98765 12340."
     ],
     [
       "agent",
-      "ஆமாம் மேடம், நல்ல கேள்வி. இரவு பத்து மணிக்கு அப்புறம் சாப்பிடக்கூடாது. தண்ணி மட்டும் குடிக்கலாம். என்னென்ன எடுத்துட்டு வரணும்னு சொல்லட்டுமா?"
+      "98765 12340, குறிச்சுக்கிட்டேன் மேடம். Appointment desk இந்த number-க்கே confirm பண்ணி call பண்ணுவாங்க."
     ]
   ],
   "prescription.refill": [
@@ -173,6 +185,18 @@
     [
       "agent",
       "கேட்டதுக்கு நல்லது மேடம். முதல்ல patient details சொல்லுங்க — பேரு, MRN?"
+    ],
+    [
+      "note",
+      "a caller often answers with the DRUG name instead of patient details - no clinical detail goes to an unverified caller, so do not confirm or deny 'is it normal' yet either way. Just take the drug name in, and get the identifiers first"
+    ],
+    [
+      "caller",
+      "Metformin தான் சாப்பிடுறேன், காலைல ஒரு tablet."
+    ],
+    [
+      "agent",
+      "சரி மேடம், Metformin-னு குறிச்சுக்கிட்டேன். அதைப் பத்தி சொல்ல முன்னாடி, பேரு, MRN சொல்லுங்களா?"
     ],
     [
       "caller",
@@ -215,6 +239,18 @@
     [
       "agent",
       "நல்ல idea சார். Lipid profile-க்கு 10 to 12 hours fasting வேணும், scan-க்கும் fasting-ஆ வர்றது தான் நல்லது — படம் clear-ஆ வரும். செவ்வாய்க்கிழமை காலை 6:30 to 7:30 slot காலியா இருக்கு, வெச்சுக்கலாமா?"
+    ],
+    [
+      "note",
+      "the caller often just asks a plain yes/no about the plan you already stated. Answer yes or no FIRST, then move the booking forward with a question - never ask them to explain how they phrased their own question"
+    ],
+    [
+      "caller",
+      "நாளைக்கு காலைல fasting-ல வரலாமா?"
+    ],
+    [
+      "agent",
+      "ஆமாம் சார், அப்படியே வரலாம். எத்தனை மணிக்கு வர convenient?"
     ]
   ],
   "lab.result_inquiry": [
@@ -270,6 +306,14 @@
     ],
     [
       "caller",
+      "கடந்த வாரம் நரம்பியல் department-ல கேட்டோம்."
+    ],
+    [
+      "agent",
+      "சரி மேடம், கடந்த வாரம்னு குறிச்சுக்கிட்டேன். Patient பேரு மட்டும் சொல்லுங்களா?"
+    ],
+    [
+      "caller",
       "Karthikeyan, MRN ARV-347602. ஐந்து நாள் ஆயிடுச்சு, இன்னும் தகவல் வரல."
     ],
     [
@@ -305,6 +349,10 @@
       "புரியுது சார், அதை நான் குறிச்சுக்கறேன். Bill number சொல்லுங்களா?"
     ],
     [
+      "note",
+      "sometimes the caller answers with just the bill number, as below - ask the specific charge next. Sometimes they give the bill number AND the specific charge together in the same breath instead. Either way, read back whatever they actually gave you (number, or number + charge) using the same குறிச்சுக்கிட்டேன் acknowledgement, and move straight to asking for a contact number - never ask them to repeat something they already said clearly"
+    ],
+    [
       "caller",
       "IP-2025-91043."
     ],
@@ -318,7 +366,7 @@
     ],
     [
       "agent",
-      "Dressing charge ₹2,400, ரெண்டு line. உங்களை எந்த number-ல contact பண்ணலாம் சார்?"
+      "Dressing charge ₹2,400, ரெண்டு line — குறிச்சுக்கிட்டேன். உங்களை எந்த number-ல contact பண்ணலாம்?"
     ],
     [
       "caller",
@@ -353,6 +401,18 @@
     [
       "agent",
       "புரியுது சார். Patient இல்லாத நேரத்துல records வாங்கறதுக்கு சட்டப்படி மூணு document வேணும் — death certificate copy, உங்க ID proof, அப்புறம் legal heir-னு காட்ட ration card இல்ல family card. அது உங்ககிட்ட இருக்கா?"
+    ],
+    [
+      "note",
+      "most records requests are for a living patient, not this one - a caller who does not know the MRN just gives whatever they DO know (name, when admitted). Take that, then ask for a verifier to proceed. Do not force this example's death/legal-document shape onto every caller"
+    ],
+    [
+      "caller",
+      "MRN தெரியல, பேரு Selvam. கடைசி admit ஆனது ரெண்டு மாசம் முன்னாடி."
+    ],
+    [
+      "agent",
+      "பரவால்ல சார். Verification-க்கு patient-ஓட date of birth சொல்லுங்களா?"
     ]
   ],
   "patient.register": [
@@ -499,6 +559,18 @@
     [
       "agent",
       "நல்ல வேளை கேட்டீங்க சார். ஒரே நேரத்துல போடக்கூடாது. ஒவ்வொரு drop-க்கும் நடுவுல ஐந்து நிமிஷம் இடைவெளி விடணும். இல்லைன்னா முதல் drop கழுவிட்டு போயிடும். இன்னைக்கு இருந்து சரியா போட்டா போதும், பயப்படாதீங்க."
+    ],
+    [
+      "note",
+      "a caller often just STATES a worry - 'seems a bit wet/red/swollen' - without asking a question. React to what they described in your own words, reassure if it is ordinary, then ask a relevant follow-up. Never repeat their sentence back as a question - that answers nothing"
+    ],
+    [
+      "caller",
+      "Dressing-ல கொஞ்சம் ஈரமா இருக்கு, பயமா இருக்கு."
+    ],
+    [
+      "agent",
+      "பயப்படாதீங்க சார், ஆரம்ப நாள்ல கொஞ்சம் ஈரம் வர்றது சாதாரணம் தான். எந்த நிறத்துல இருக்கு — தண்ணி மாதிரியா, இல்ல இரத்தம் மாதிரி சிவப்பா?"
     ]
   ],
   "emergency.escalate": [
@@ -581,6 +653,18 @@
     [
       "agent",
       "BIL-71856, BIL-71857 — ரெண்டையும் குறிச்சுக்கிட்டேன் சார். இதை நான் finance manager-கிட்ட நேரா escalate பண்றேன், அவங்க இன்னைக்கே உங்களுக்கு call பண்ணுவாங்க. இதே number-க்கா?"
+    ],
+    [
+      "note",
+      "a caller who does not have the ticket number will often ask YOU for a fact instead - a refund reference, a status - that only the system holds. Do not echo their question back at them; say you do not have it, and ask for what you actually need to look it up"
+    ],
+    [
+      "caller",
+      "பேரு Meena. Refund reference number என்ன?"
+    ],
+    [
+      "agent",
+      "அது என்கிட்ட இப்போ இல்ல மேடம் — system-ல தான் இருக்கும். Ticket number சொல்லுங்க, நான் அதை வெச்சு தேடி callback-ல சொல்றேன்."
     ]
   ]
 }

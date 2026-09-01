@@ -248,3 +248,28 @@ def test_the_shipped_lexicon_file_itself_passes_the_safety_screens() -> None:
     for form, english in tn._GENERATED.items():
         assert re.fullmatch(r"[஀-௿‌‍]+", form), f"{form!r} is not one Tamil token"
         assert re.fullmatch(r"[A-Za-z][A-Za-z'-]*", english), f"{english!r} is not a Latin word"
+
+
+def test_the_word_that_routes_an_emergency_survives_the_asr() -> None:
+    """The ASR can only emit Tamil script, so a caller asking for an ambulance
+    produced "அம்புலான்ஸ்" and prompt_builder.py's EMERGENCY trigger - which
+    was the Latin "ambulance" - matched nothing. Observed live for five
+    consecutive turns of one call, every one of them routed to info.general.
+    Three spellings because that call produced three."""
+    for heard in ("அம்புலான்ஸ்", "அம்புலன்ஸ்", "ஆம்புலன்ஸ்"):
+        assert normalize_transcript(heard) == "ambulance", heard
+    assert normalize_transcript("எனக்கு அம்புலான்ஸ் வேணும்") == "எனக்கு ambulance வேணும்"
+
+
+def test_short_generated_entries_never_rewrite_ordinary_tamil() -> None:
+    """The generated lexicon is built by round-tripping English through TTS and
+    back, and below six characters what comes back collides with real Tamil:
+    it shipped நம்ப->number, கீழ்->keep, சூழ்->phone, காபி->copy. Each one
+    corrupts the transcript the model then has to answer, which is worse than
+    leaving an English word transliterated. See _MIN_GENERATED_KEY_LEN."""
+    assert normalize_transcript("நம்ப முடியல") == "நம்ப முடியல"
+    for tamil in ("கீழ்", "சூழ்", "காபி", "கேரளா", "சாய்"):
+        assert normalize_transcript(tamil) == tamil, tamil
+    # ...while the long entries, which is where the real transliterations are,
+    # still work.
+    assert normalize_transcript("எமர்ஜென்சி") == "emergency"

@@ -15,6 +15,10 @@ import logging
 from .conversation import (
     KNOWN_PLACEHOLDERS,
     _CANNOT_RECALL,
+    _ECHO_RECOVERY,
+    _EMERGENCY_STUCK_REPLIES,
+    _OUT_OF_SCOPE,
+    _STUCK_REPLIES,
     _with_language_reminder,
     AgentClause,
     AgentTurn,
@@ -625,3 +629,145 @@ async def test_the_repeat_breaker_never_suppresses_a_repeated_refusal() -> None:
         said.append(events[-1].text)
 
     assert said == [refusal] * 3, f"the refusal was suppressed or altered: {said}"
+
+
+async def test_a_looping_decoder_is_never_spoken_to_the_caller() -> None:
+    """Observed live, mid-emergency: "உங்க முழு முழு முழு ..." for twenty-two
+    words, and the caller heard all of it. Neither existing guard could see it -
+    the repeat breaker compares clauses ACROSS turns and this is one turn, and
+    the clause chunker cuts the opening at 32 characters and then waits for
+    punctuation a looping decoder never emits."""
+    manager = _make_manager()
+    manager.start_call("conn-loop", agent_name="Gayathri")
+    loop = "உங்க முழு " + "முழு " * 20
+    llm = _ScriptedLlm([LlmReply(content=loop)])
+
+    # A non-emergency turn deliberately: which recovery ladder a stuck turn
+    # draws from is the neighbouring test's business, not this one's.
+    events = [e async for e in manager.stream_utterance("conn-loop", llm, "appointment book பண்ணணும்")]
+
+    assert "முழு முழு முழு" not in events[-1].text, f"the loop was spoken: {events[-1].text}"
+    assert events[-1].text in _STUCK_REPLIES, f"no recovery was offered: {events[-1].text}"
+
+
+async def test_the_agent_never_hands_the_callers_own_sentence_back() -> None:
+    """_LANGUAGE_REMINDER has forbidden this for as long as it has existed and
+    the model does it anyway. Observed live on both a question and, far worse,
+    on an emergency: the caller said they were fighting for their life and the
+    agent said it back to them."""
+    manager = _make_manager()
+    manager.start_call("conn-echo", agent_name="Gayathri")
+    llm = _ScriptedLlm([LlmReply(content="visiting hours என்ன சார்?")])
+
+    events = [e async for e in manager.stream_utterance("conn-echo", llm, "visiting hours என்ன?")]
+
+    assert events[-1].text == _ECHO_RECOVERY, f"the parrot was spoken: {events[-1].text}"
+
+
+async def test_the_echo_guard_leaves_a_read_back_alone() -> None:
+    """The LEDGER section requires reading facts back to confirm them, and the
+    EMERGENCY playbook requires it of the address specifically. A guard that
+    could not tell a read-back from a parrot would be a safety regression, so
+    the read-backs are what this actually protects."""
+    manager = _make_manager()
+    manager.start_call("conn-readback", agent_name="Gayathri")
+    llm = _ScriptedLlm(
+        [
+            LlmReply(content="98407 21534, குறிச்சுக்கிட்டேன். எந்த நாள் convenient சார்?"),
+            LlmReply(content="Anna Nagar 2nd street, சரியா சார்?"),
+        ]
+    )
+
+    first = [e async for e in manager.stream_utterance("conn-readback", llm, "98407 21534")][-1]
+    second = [
+        e async for e in manager.stream_utterance("conn-readback", llm, "Anna Nagar 2nd street")
+    ][-1]
+
+    assert "98407 21534" in first.text, f"the number read-back was withheld: {first.text}"
+    assert "Anna Nagar" in second.text, f"the address read-back was withheld: {second.text}"
+
+
+async def test_an_answer_that_uses_the_callers_words_is_not_a_parrot() -> None:
+    """A real answer necessarily adds words the caller did not say, which is
+    what both bars in _echoes_caller are measuring."""
+    manager = _make_manager()
+    manager.start_call("conn-answer", agent_name="Gayathri")
+    reply = "Visiting hours காலைல 10 மணி to 12 மணி சார்."
+    llm = _ScriptedLlm([LlmReply(content=reply)])
+
+    events = [e async for e in manager.stream_utterance("conn-answer", llm, "visiting hours என்ன?")]
+
+    assert events[-1].text == reply, f"a real answer was withheld: {events[-1].text}"
+
+
+async def test_an_off_topic_opener_is_told_what_the_desk_answers() -> None:
+    """detect_intent returning None used to fall through to the info.general
+    playbook and let the model improvise, which is how a question the hospital
+    desk does not handle gets a confident invented answer. Costs no LLM call."""
+    manager = _make_manager()
+    manager.start_call("conn-scope", agent_name="Gayathri")
+    llm = _ScriptedLlm([])  # a scripted reply here would mean the LLM was called
+
+    events = [
+        e async for e in manager.stream_utterance("conn-scope", llm, "நாளைக்கு மழை பெய்யுமா")
+    ]
+
+    assert events[-1].text == _OUT_OF_SCOPE
+    assert llm.calls == [], "an off-topic turn should not reach the model at all"
+
+
+async def test_the_scope_line_never_displaces_a_turn_inside_a_live_flow() -> None:
+    """Once a flow is running, a turn that matches no trigger is the caller
+    ANSWERING a question - a day, a name, a number - and belongs to the model.
+    This is the failure mode that makes an eager scope check worse than none."""
+    manager = _make_manager()
+    manager.start_call("conn-inflow", agent_name="Gayathri")
+    llm = _ScriptedLlm(
+        [
+            LlmReply(content="சரி சார். உங்க பேரு சொல்லுங்க?"),
+            LlmReply(content="நன்றி முருகேசன் சார். Mobile number சொல்லுங்க?"),
+        ]
+    )
+
+    [e async for e in manager.stream_utterance("conn-inflow", llm, "appointment book பண்ணணும்")]
+    second = [
+        e async for e in manager.stream_utterance("conn-inflow", llm, "என் பேரு முருகேசன் சார்")
+    ][-1]
+
+    assert "முருகேசன்" in second.text, f"the scope line displaced a real turn: {second.text}"
+
+
+async def test_the_scope_line_is_said_once_and_then_the_model_takes_over() -> None:
+    """A caller who hears the list and still says nothing that routes is better
+    served by the model than by the same list again."""
+    manager = _make_manager()
+    manager.start_call("conn-scope2", agent_name="Gayathri")
+    llm = _ScriptedLlm([LlmReply(content="சொல்லுங்க சார், என்ன வேணும்?")])
+
+    first = [e async for e in manager.stream_utterance("conn-scope2", llm, "நாளைக்கு மழை பெய்யுமா")][-1]
+    second = [e async for e in manager.stream_utterance("conn-scope2", llm, "cricket score என்ன")][-1]
+
+    assert first.text == _OUT_OF_SCOPE
+    assert second.text != _OUT_OF_SCOPE, "the desk read out the same list twice"
+
+
+async def test_the_repeat_breaker_never_hangs_up_on_an_emergency() -> None:
+    """The ordinary escalation ends the call - "Desk-ல இருந்து call பண்ண
+    சொல்றேன். நன்றி சார்." - and main_prompt.txt flow 18 forbids exactly that:
+    "you do NOT end this call", "Never hang up". An emergency gets a ladder
+    that keeps the line open and repeats the two things that matter."""
+    manager = _make_manager()
+    manager.start_call("conn-er", agent_name="Gayathri")
+    repeated = "உங்க address சொல்லுங்க சார்?"
+    llm = _ScriptedLlm([LlmReply(content=repeated) for _ in range(5)])
+
+    said = []
+    for caller in ("ambulance வேணும்", "சீக்கிரம்", "ஐயோ", "சார்", "என்ன பண்றது"):
+        events = [e async for e in manager.stream_utterance("conn-er", llm, caller)]
+        said.append(events[-1].text)
+
+    assert manager._sessions["conn-er"].intent == "emergency.escalate"
+    for turn in said[1:]:
+        assert turn in _EMERGENCY_STUCK_REPLIES, f"used the hang-up ladder: {turn}"
+        assert "நன்றி சார்" not in turn, f"closed an emergency call: {turn}"
+        assert "108" in turn, f"an emergency recovery must still drive to 108: {turn}"

@@ -49,10 +49,34 @@ EMERGENCY_INTENT = "emergency.escalate"
 # less-specific playbook, never to a wrong answer.
 _INTENT_PATTERNS: list[tuple[str, str]] = [
     (
+        # THIS ROW IS A SAFETY DEVICE, and it is the one row where a false
+        # positive is cheaper than a miss. A wrongly-triggered emergency costs
+        # one embarrassing turn; a missed one routes a caller who cannot
+        # breathe to the info.general playbook.
+        #
+        # It missed a whole live call, every turn of it. The caller said
+        # "எனக்கு அம்புலான்ஸ் வேணும்" four times and then "நான் உயிருக்கு
+        # போராடிட்டு இருக்கேன்", and detect_intent returned None for all five,
+        # for two separate reasons that both had to be fixed:
+        #
+        #   1. The trigger was the LATIN "ambulance". The ASR is a Tamil-only
+        #      model and can only ever emit Tamil script, so the caller's word
+        #      arrived as அம்புலான்ஸ் and matched nothing. Every English trigger
+        #      in this table has that hole; it is closed for this row here and
+        #      for the desk vocabulary generally by transcript_norm.py.
+        #   2. "உயிர்" does not match "உயிருக்கு". The pulli is not a stable
+        #      thing to anchor on - it disappears whenever a vowel suffix
+        #      attaches (உயிர் + உக்கு -> உயிருக்கு), which is most of the time
+        #      in a real sentence. Tamil stems here are written WITHOUT the
+        #      trailing pulli so they survive inflection.
+        #
+        # "அவசர" (urgent) is included knowing it also matches "அவசரம் இல்ல"
+        # (no hurry). That is the trade above, taken deliberately.
         EMERGENCY_INTENT,
-        r"நெஞ்சு\s*வலி|chest\s*pain|மயக்க|மூச்சு\s*வாங்|மூச்சு\s*விட|வலிப்ப|seizure|"
-        r"unconscious|ரத்தம்\s*போ|bleeding|சுத்த\s*முடிய|ambulance|108|"
-        r"உயிர்|தூக்கி|விழுந்துட்டா|பேச\s*முடிய",
+        r"நெஞ்சு\s*வலி|chest\s*pain|மயக்க|மூச்சு|வலிப்ப|seizure|"
+        r"unconscious|ரத்தம்\s*(போ|வ|கொட்)|bleeding|சுத்த\s*முடிய|108|"
+        r"உயிர|தூக்கி|விழுந்துட்டா|பேச\s*முடிய|"
+        r"ambulance|அம்புல|ஆம்புல|emergency|எமர்ஜென்|அவசர",
     ),
     (
         "complaint.escalation_angry",
@@ -157,6 +181,45 @@ _INTENT_PATTERNS: list[tuple[str, str]] = [
 ]
 
 _COMPILED_PATTERNS = [(intent, re.compile(pattern, re.IGNORECASE)) for intent, pattern in _INTENT_PATTERNS]
+
+
+# Is this turn hospital business AT ALL, whatever flow it belongs to?
+#
+# detect_intent() returning None is NOT evidence that a caller is off-topic,
+# and treating it that way is a mistake that costs a real request. The table
+# above needs a specific phrasing to fire, and the twenty flows have gaps
+# between them: "என் details check பண்ணுங்க" is an ordinary thing to ring a
+# hospital about and matches nothing in it.
+#
+# So being off-topic has to be established POSITIVELY - no flow matched AND
+# nothing in the turn is hospital business - and this is the second half. It is
+# deliberately generous and deliberately NOT flow-specific: departments, staff,
+# body and symptom words, the desk's own verbs. The two errors are not
+# symmetric. Missing an off-topic turn costs nothing new (the model improvises
+# from info.general, exactly as it did before this existed); deflecting a real
+# request tells a caller with a genuine problem to go away.
+_HOSPITAL_CONTEXT_RE = re.compile(
+    r"hospital|clinic|doctor|dr\.?\s|patient|nurse|ward|ICU|OP|emergency|ambulance|"
+    r"appointment|department|medicine|medical|health|surgery|operation|scan|test|report|"
+    r"bill|payment|insurance|policy|record|discharge|admit|treatment|consult|checkup|"
+    r"check|details|help|token|counter|desk|reception|visit|timing|pharmacy|lab|"
+    r"blood|tablet|prescription|MRN|refill|referral|complaint|"
+    r"ஹாஸ்பிட்டல்|ஆஸ்பத்திரி|மருத்துவ|மருந்து|டாக்டர|நர்ஸ்|பேஷண்ட|நோயாளி|"
+    r"உடம்பு|உடல்|வலி|காய்ச்சல|சுகர்|ரத்த|மாத்திரை|சிகிச்சை|அறுவை|ஆபரேஷன்|"
+    r"வார்டு|பரிசோதனை|ரிப்போர்ட|பில்|கட்டணம்|காப்பீ|சிகிச|செக்கப|"
+    r"அப்பாயின்|டெஸ்ட|ஸ்கேன|மெடிக|நேரம்|டைமிங|விசிட",
+    re.IGNORECASE,
+)
+
+
+def looks_like_hospital_business(text: str) -> bool:
+    """Whether this turn is about the hospital at all, whatever flow it is.
+
+    Used only to decide whether an unroutable turn is genuinely off-topic. See
+    the comment above _HOSPITAL_CONTEXT_RE for why the test is positive rather
+    than "detect_intent found nothing".
+    """
+    return bool(_HOSPITAL_CONTEXT_RE.search(text))
 
 
 def detect_intent(text: str) -> str | None:

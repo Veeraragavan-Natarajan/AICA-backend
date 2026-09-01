@@ -32,7 +32,12 @@ import re
 from .clause_chunker import ClauseChunker
 from .grounding import grounding_sources, unbacked_action_claims, ungrounded_identifiers
 from .llm import LlmClient, LlmReply, ReplyComplete
-from .prompt_builder import PromptBuilder, detect_intent
+from .prompt_builder import (
+    EMERGENCY_INTENT,
+    PromptBuilder,
+    detect_intent,
+    looks_like_hospital_business,
+)
 from .settings import ConversationSettings, LlmSettings
 
 logger = logging.getLogger("aica.conversation")
@@ -456,6 +461,37 @@ class ConversationManager:
 
         _append_caller_turn(session, text)
 
+        # Nothing this desk does. Say so, instead of asking the model to
+        # improvise an answer out of the info.general playbook.
+        #
+        # Three conditions, and every one of them is a brake rather than a
+        # trigger, because deflecting a real caller is far worse than letting
+        # an off-topic one through to the model:
+        #
+        #   no flow, and no hospital words either - detect_intent finding
+        #     nothing is not evidence of anything on its own, the trigger table
+        #     has gaps between its twenty flows (see looks_like_hospital_business)
+        #   the caller's FIRST turn - this is the "why are you ringing" moment.
+        #     Later turns that match no trigger are the caller ANSWERING a
+        #     question - a day, a name, an address - and belong to the model.
+        #     Measured: without this the line displaced "Anna Nagar 2nd street"
+        #     given as an address mid-call.
+        #   a real sentence, not a fragment - a bare number or "ஆமாம்" matches
+        #     no trigger either
+        if (
+            session.intent is None
+            and _is_first_caller_turn(session)
+            and not looks_like_hospital_business(text)
+            and len(text.split()) >= _MIN_OUT_OF_SCOPE_WORDS
+        ):
+            logger.info("off-topic opener from %s: %r - naming what the desk does", connection_id, text)
+            session.messages.append({"role": "assistant", "content": _OUT_OF_SCOPE})
+            _trim_history(session, llm.settings)
+            for clause in split_reply_into_clauses(_OUT_OF_SCOPE):
+                yield AgentClause(clause)
+            yield AgentTurn(text=_OUT_OF_SCOPE)
+            return
+
         chunker = ClauseChunker()
         spoken: list[str] = []
         asked_question = False
@@ -484,7 +520,17 @@ class ConversationManager:
             with, deliberately: one definition, so the guard and the eval
             cannot disagree about what a question is.
             """
-            nonlocal asked_question, stuck, regreeted, fabricated
+            nonlocal asked_question, stuck, regreeted, fabricated, echoed, anchor
+            # A LOOPING DECODER IS NOT SPEECH. Checked first because it is the
+            # cheapest test here and the most decisive: nothing else about a
+            # clause matters once it is "முழு முழு முழு முழு". Routed into
+            # `stuck` rather than given its own recovery - a wedged model and a
+            # wedged line need the same thing from the caller's side, and the
+            # escalation to the desk handoff is the right ending for both.
+            if _is_degenerate(clause):
+                logger.error("degenerate generation from %s: %r", connection_id, clause[:80])
+                stuck = True
+                return False
             # NEVER SPEAK AN IDENTIFIER THE AGENT CANNOT ACCOUNT FOR. Observed
             # live over the socket: the agent asked for a mobile number, the
             # caller answered "வயசு 58" instead, and the agent replied
@@ -535,11 +581,37 @@ class ConversationManager:
             # chunker releases it from flush() once the stream is done, so a
             # guard on the loop alone silently never fires on the only turns it
             # exists for. This function is the one place BOTH paths go through.
-            if not spoken and _is_repeat_opening(clause, session.recent_openings):
-                logger.info(
-                    "repeat breaker: %s was about to open with %r again", connection_id, clause
-                )
-                stuck = True
+            # Anchored on the first clause with something IN it, not on the
+            # first clause. Those are usually not the same one, and assuming
+            # they were let a verbatim repeat through: measured on the real
+            # model, three emergency turns running came back as
+            #
+            #     "சரி, நான் கேட்டுட்டேன். முதலில் — உங்களுக்கு address சொல்லுங்க?"
+            #
+            # byte-identical, and the breaker never fired on any of them. The
+            # clause chunker's fast-first-chunk rule cuts the opening at the
+            # first comma so it can start speaking sooner, which made the
+            # remembered opening "சரி" - one word, below _MIN_REPEAT_WORDS, and
+            # therefore forgiven as an acknowledgement every single time.
+            #
+            # Skipping the acknowledgement on BOTH sides - what is compared and
+            # what is remembered - is what makes the comparison land on the
+            # part of the turn that carries its meaning.
+            if anchor is None and len(clause.split()) >= _MIN_REPEAT_WORDS:
+                anchor = clause
+                if _is_repeat_opening(clause, session.recent_openings):
+                    logger.info(
+                        "repeat breaker: %s was about to say %r again", connection_id, clause
+                    )
+                    stuck = True
+                    return False
+            # The caller's own sentence handed back to them. Unlike the repeat
+            # breaker this does NOT end the turn: the parrot is usually the
+            # opening clause and the real answer follows it, so dropping the
+            # one clause and letting the rest through keeps the good half.
+            if _echoes_caller(clause, text):
+                logger.info("echo guard: %s parroted the caller: %r", connection_id, clause)
+                echoed = True
                 return False
             if "?" not in clause:
                 return True
@@ -563,11 +635,29 @@ class ConversationManager:
         # Set by speakable() when it dropped a clause stating an identifier the
         # agent could not account for.
         fabricated = False
+        # Set by speakable() when it dropped a clause that was the caller's own
+        # sentence handed back.
+        echoed = False
+        # The first clause of this turn carrying more than an acknowledgement -
+        # what the repeat breaker compares against, and what it remembers.
+        anchor: str | None = None
         # Computed once per turn, not per clause: the caller's own words this
         # call, plus any tool/ledger facts. Includes the user message appended
         # a few lines above, so a number the caller just said is grounded.
         sources = grounding_sources(session.messages)
         facts = self._turn_facts_message(session)
+        # Trim HERE, against the prompt about to go on the wire, and not only
+        # at the end of the turn. The end-of-turn trim sizes the history for a
+        # turn that has not happened yet, and the caller's next message is
+        # appended after it - so what the model was actually handed could sit
+        # one caller turn over the budget the trim had just enforced.
+        #
+        # Latent until the repeat breaker started catching more turns: while
+        # every assistant turn was a full 177 characters the trim dropped whole
+        # exchanges and left slack, and the short recovery lines fit inside the
+        # budget exactly well enough to expose the gap (measured: 1706 chars of
+        # history against a 1684-char budget, 6 tokens over num_ctx).
+        _trim_history(session, llm.settings, facts)
         stream = llm.stream(_with_language_reminder(session.messages, facts))
         async for event in stream:
             if isinstance(event, ReplyComplete):
@@ -599,8 +689,13 @@ class ConversationManager:
                 yield AgentClause(remainder)
 
         if stuck:
-            session.repeat_count = min(session.repeat_count + 1, len(_STUCK_REPLIES))
-            recovery = _STUCK_REPLIES[session.repeat_count - 1]
+            ladder = (
+                _EMERGENCY_STUCK_REPLIES
+                if session.intent == EMERGENCY_INTENT
+                else _STUCK_REPLIES
+            )
+            session.repeat_count = min(session.repeat_count + 1, len(ladder))
+            recovery = ladder[session.repeat_count - 1]
             # The recovery lines are deliberately NOT remembered: they differ
             # from each other by design, so they could never match anyway, and
             # the escalating counter is what ends a hopeless stretch.
@@ -627,6 +722,13 @@ class ConversationManager:
             # said hello back and not yet got to why they rang.
             spoken.append(_GO_AHEAD)
             yield AgentClause(_GO_AHEAD)
+        elif not spoken and echoed:
+            # Same reasoning, one step further: the whole turn was the caller's
+            # own question read back to them, so withholding it leaves silence.
+            # Observed live on "Visiting hours என்ன?", whose entire reply was
+            # "விசிடிங் ஹவுர்ஸ் என்ன சார்?".
+            spoken.append(_ECHO_RECOVERY)
+            yield AgentClause(_ECHO_RECOVERY)
 
         spoken_text = " ".join(spoken)
         # What was SPOKEN, not what was generated - the two differ whenever a
@@ -635,12 +737,12 @@ class ConversationManager:
         # the caller heard, or it will treat a question nobody was asked as
         # already asked and never come back to it.
         session.messages.append({"role": "assistant", "content": spoken_text})
-        # Remember what this turn opened with so later turns can be checked
+        # Remember what this turn actually SAID so later turns can be checked
         # against it, and forgive the earlier repeats: a turn that got through
         # means the model is unstuck, so a later bad patch starts again at the
         # gentlest wording rather than jumping straight to the handoff.
-        if spoken:
-            session.recent_openings.append(spoken[0])
+        if anchor is not None:
+            session.recent_openings.append(anchor)
             del session.recent_openings[:-RECENT_OPENINGS_KEPT]
         session.repeat_count = 0
         _trim_history(session, llm.settings, facts)
@@ -740,6 +842,48 @@ _GO_AHEAD = "சொல்லுங்க சார், என்ன help வே�
 # rather than inventing a new register for it.
 _CANNOT_RECALL = "மன்னிச்சுடுங்க சார், அது என்கிட்ட இல்ல. ஒரு தடவை சொல்லுங்களா?"
 
+# Said when the whole turn was the caller's own sentence handed back. There is
+# no way to recover the answer the model failed to give, so this takes the
+# request down and hands it on, which is what YOUR JOB in runtime_core.txt says
+# to do with anything the agent cannot answer itself.
+_ECHO_RECOVERY = "மன்னிச்சுடுங்க சார். அதை desk-ல இருந்து confirm பண்ணி call பண்ணுவாங்க. வேற ஏதாவது help வேணுமா?"
+
+# Said when the caller opens with something no flow covers at all.
+#
+# This is the branch the twenty-flow trigger table never had: detect_intent
+# returning None fell through to DEFAULT_FLOW and the model improvised an
+# answer from the info.general playbook, which is how a request the hospital
+# desk does not handle gets a confident, invented reply instead of a straight
+# one. Naming what the desk DOES handle is both the honest answer and the
+# fastest one - it costs no LLM call at all, so an off-topic turn is the
+# quickest turn in the call rather than the slowest.
+#
+# Says outright that this is the hospital desk and that the question is not
+# one it answers, then names what it does answer and hands the turn back. The
+# formal register ("மன்னிக்கவும்", not the colloquial "மன்னிச்சுடுங்க" the
+# other canned lines use) is deliberate: this is the one line that declines
+# something, and a decline is said formally.
+#
+# It ends on the list rather than the decline so it still serves the VAGUE
+# opener ("எனக்கு ஒரு help வேணும்") as well as the genuinely off-topic one -
+# for that caller the list is the whole answer.
+#
+# This is the one place runtime_core.txt's "NEVER open with what you cannot
+# do" is deliberately not followed. That rule exists to stop the agent
+# refusing work the desk really does take ("appointment book பண்ண முடியாது"),
+# and none of that applies to a question the desk genuinely does not answer.
+_OUT_OF_SCOPE = (
+    "மன்னிக்கவும் சார். இது அருவி ஹாஸ்பிட்டல் desk number — "
+    "அதுக்கு நாங்க பதில் சொல்ல முடியாது. "
+    "Appointment, report, bill, insurance, records, ambulance — "
+    "இதுல எதுலயாவது help வேணுமா?"
+)
+
+# Below this the turn is a fragment, not a request: a bare number, "ஆமாம்",
+# a name. Those match no trigger either, and answering them with the menu
+# would be worse than letting the model handle them.
+_MIN_OUT_OF_SCOPE_WORDS = 3
+
 # What the agent says instead of repeating itself, in order. The first two ask
 # again in fresh words; the third stops asking and hands the call to the desk,
 # so a caller on a line that is not working gets an exit instead of the same
@@ -748,6 +892,24 @@ _STUCK_REPLIES = (
     "மன்னிச்சுடுங்க சார், clear-ஆ கேட்கல. இன்னொரு தரம் சொல்லுங்களா?",
     "Line-ல கொஞ்சம் disturbance சார். கொஞ்சம் மெதுவா சொல்லுங்க?",
     "இன்னும் சரியா கேட்கல சார். Desk-ல இருந்து உங்களுக்கு call பண்ண சொல்றேன். நன்றி சார்.",
+)
+
+# The same escalation is WRONG on an emergency, and the third line above is
+# actively unsafe there: "Desk-ல இருந்து call பண்ண சொல்றேன். நன்றி சார்." ends
+# the call, and flow 18 says in as many words that the agent does not end this
+# call and never hangs up - "Stay on the line until the ambulance arrives or
+# the caller disconnects."
+#
+# So an emergency gets its own ladder, and it does not escalate towards a
+# handoff because there is nowhere better to hand a caller who cannot breathe.
+# All three keep the line open, and all three carry the two things that
+# actually matter while the model is not producing a usable turn: ring 108 now,
+# and give me the address. A caller who hears only these three has still been
+# told the thing that saves them.
+_EMERGENCY_STUCK_REPLIES = (
+    "சார், இப்பவே 108-க்கு call பண்ணுங்க. நீங்க இருக்கிற address-ஐ மட்டும் சொல்லுங்க.",
+    "108-க்கு call பண்ணிட்டீங்களா சார்? உங்க address சொல்லுங்க, ER team-கிட்ட சொல்லிடறேன்.",
+    "நான் line-லயே இருக்கேன் சார், phone-ஐ வெக்காதீங்க. 108-க்கு call பண்ணுங்க — address சொன்னா ER team ready-யா இருப்பாங்க.",
 )
 
 # A two-word opening ("சரி சார்.", "நானே சார்,") is an acknowledgement, and two
@@ -764,6 +926,91 @@ _REFUSAL_RE = re.compile(r"முடியாது|மாட்டேன்")
 
 
 RECENT_OPENINGS_KEPT = 3
+
+
+# How many times one word may repeat back-to-back before the turn is a stuck
+# decoder rather than speech.
+#
+# Observed live, twice in one call, both times mid-emergency:
+#
+#     "உங்களுக்கு அடிப்படை அடிப்படை அடிப்படை அடிப்படை ..."   (x12)
+#     "உங்க முழு முழு முழு முழு முழு ..."                     (x22)
+#
+# Neither existing guard could see it. _is_repeat_opening compares whole
+# clauses ACROSS turns and this is one turn; the clause chunker cuts the
+# opening at 32 characters and then waits for punctuation that a looping
+# decoder never emits, so the rest arrived in one enormous clause out of
+# flush(). Both halves were spoken to the caller.
+#
+# Three, because the chunker's 32-character opening cut lands after the third
+# repeat - "உங்களுக்கு அடிப்படை அடிப்படை அடிப்படை" is exactly what it released -
+# so a bar of three is what catches the loop in the FIRST clause, before any of
+# it is spoken. Ordinary speech does not say the same word three times running,
+# and this agent's own register never does.
+_MAX_WORD_REPEATS = 3
+
+# Words that are not evidence of anything when they appear in both the caller's
+# line and the agent's: an acknowledgement is supposed to echo.
+_ECHO_STOPWORDS = frozenset({"சார்", "மேடம்", "சரி", "ஆமாம்", "ஓகே", "ok", "நன்றி", "ஒரு"})
+
+# A clause that reads back what the caller said IS the wanted behaviour - the
+# LEDGER section requires it ("Confirm by reading back for a yes"), and the
+# EMERGENCY playbook requires it of the address specifically. Those clauses
+# always carry a confirmation marker or a number, which is what separates them
+# from a parrot.
+_READBACK_RE = re.compile(r"சரியா|சரிதான|குறிச்|note\s*பண்ண|right\?|correct\?|\d")
+
+# How much of a clause has to be the caller's own words before it is a parrot
+# rather than an answer. Both bars must be cleared: three shared content words
+# AND two-thirds of the clause, so a real answer - which necessarily adds words
+# the caller did not say - is never touched.
+_MIN_ECHOED_WORDS = 3
+_ECHO_SHARE = 0.66
+
+
+def _is_degenerate(clause: str) -> bool:
+    """Whether this clause is a decoder loop rather than something to say."""
+    words = clause.split()
+    run = 1
+    for previous, word in zip(words, words[1:]):
+        run = run + 1 if word == previous else 1
+        if run >= _MAX_WORD_REPEATS:
+            return True
+    return False
+
+
+def _echoes_caller(clause: str, caller_text: str) -> bool:
+    """Whether this clause is the caller's own sentence handed back to them.
+
+    _LANGUAGE_REMINDER has told the model "never repeat the caller's own
+    sentence back at them" for as long as it has existed and the model does it
+    anyway - same story as the one-question rule and the repeat breaker, and
+    the same answer: what the model will not do on instruction, the server does
+    for it.
+
+    Observed live, both wasting the whole turn:
+
+        CALLER  Visiting hours என்ன?
+        AGENT   விசிடிங் ஹவுர்ஸ் என்ன சார்?
+        CALLER  நான் உயிருக்கு போராடிட்டு இருக்கேன்
+        AGENT   உயிருக்கு போராடிட்டு இருக்கேன் சார்.
+
+    The second one is why this is not merely a style fix. Reflecting "I am
+    fighting for my life" back at the person who said it is the worst possible
+    turn to spend on an emergency call.
+
+    Deliberately NOT a ban on repeating the caller's words - that would break
+    the read-back the prompt requires. See _READBACK_RE and the two bars above.
+    """
+    if _READBACK_RE.search(clause):
+        return False
+    caller_words = {w.lower() for w in _WORD_RE.findall(caller_text)}
+    words = [w.lower() for w in _WORD_RE.findall(clause)]
+    content = [w for w in words if w not in _ECHO_STOPWORDS]
+    if not content:
+        return False
+    shared = sum(1 for w in content if w in caller_words)
+    return shared >= _MIN_ECHOED_WORDS and shared / len(content) >= _ECHO_SHARE
 
 
 def _is_repeat_opening(clause: str, recent: list[str]) -> bool:
@@ -803,6 +1050,16 @@ def _is_repeat_opening(clause: str, recent: list[str]) -> bool:
         # pressure is the opposite of stuck.
         return False
     return len(clause.split()) >= _MIN_REPEAT_WORDS and clause in recent
+
+
+def _is_first_caller_turn(session: CallSession) -> bool:
+    """Whether the caller has said exactly one thing so far this call.
+
+    Call AFTER _append_caller_turn, which merges a run of caller turns the
+    agent never got a word in between into one message - so this counts what
+    the caller has had ANSWERED, which is the question being asked.
+    """
+    return sum(1 for message in session.messages if message.get("role") == "user") == 1
 
 
 def _append_caller_turn(session: CallSession, text: str) -> None:

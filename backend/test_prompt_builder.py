@@ -618,3 +618,31 @@ def test_the_appointment_exemplar_demonstrates_a_bare_answer() -> None:
             assert word.lower() not in said, (
                 f"the exemplar repeats the bare answer {caller!r} back as {agent!r}"
             )
+
+
+def test_every_way_a_caller_asks_for_an_ambulance_routes_to_emergency() -> None:
+    """The whole trigger row failed on a live call. The caller said they needed
+    an ambulance four times and then that they were fighting for their life,
+    and detect_intent returned None for all five - so an emergency ran on the
+    info.general playbook from end to end.
+
+    Two independent causes, both fixed in the row and both tested here: the
+    trigger was the Latin "ambulance" against a Tamil-only ASR, and "உயிர்" does
+    not match "உயிருக்கு" because the pulli disappears under a vowel suffix.
+    """
+    for heard in (
+        "அவசரம் முடியல எனக்கு ambulance வேணும்",
+        "ambulance வேணும்",
+        "நான் உயிருக்கு போராடிட்டு இருக்கேன்",
+        "நெஞ்சு வலிக்குது",
+        "மூச்சு திணறுது",
+        "எமர்ஜென்சி சார்",
+    ):
+        assert detect_intent(heard) == "emergency.escalate", heard
+
+
+def test_emergency_outranks_the_flow_the_caller_started_in() -> None:
+    """main_prompt.txt Sec8 flow 18 is an OVERRIDE - it is listed first in the
+    table so a turn that is both an appointment and an emergency is routed as
+    the emergency."""
+    assert detect_intent("appointment book பண்ணணும், நெஞ்சு வலிக்குது") == "emergency.escalate"
