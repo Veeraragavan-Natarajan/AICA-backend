@@ -1346,13 +1346,30 @@ def _cancel_reply(session: CallSession, caller_text: str) -> str:
     )
 
 
-def _information_reply(caller_text: str) -> str | None:
+def _information_reply(session: CallSession, caller_text: str) -> str | None:
     """Answer only the public fact asked for; never inherit exemplar branches."""
     text = caller_text.lower()
     if re.search(r"நன்றி|thank", text, re.IGNORECASE):
         return "நன்றி. வணக்கம்."
     parts: list[str] = []
     asks_wheelchair_time = False
+    identity_requested = bool(
+        re.search(
+            r"who\s+are\s+you|your\s+name|agent\s*name|"
+            r"உங்க\s*பேரு|உங்கள்\s*பெயர்|நீங்க\s*யாரு|யார்\s*பேசுற|"
+            r"hospital\s*(?:name|details?|address)|"
+            r"(?:ஹாஸ்பிட்டல்|ஆஸ்பத்திரி)\s*(?:பேரு|பெயர்|விவரம்|details?|address)|"
+            r"எந்த\s*(?:hospital|ஹாஸ்பிட்டல்|ஆஸ்பத்திரி)",
+            caller_text,
+            re.IGNORECASE,
+        )
+    )
+    if identity_requested:
+        agent_name = str(session.ledger.get("agent_name") or "Gayathri")
+        parts.append(
+            f"நான் {agent_name} பேசுறேன். இது Aruvi Multispeciality Hospital. "
+            "Address OMR, Perungudi, Chennai; Perungudi signal-லிருந்து 2 kilometres."
+        )
     if re.search(r"\bICU\b", caller_text, re.IGNORECASE):
         parts.append("ICU visiting மாலை 5 to 5:30 மட்டும்; ஒரு நேரத்துல ஒருத்தர் தான்.")
     elif re.search(r"visiting|விசிட்டிங்", text, re.IGNORECASE):
@@ -1366,7 +1383,7 @@ def _information_reply(caller_text: str) -> str | None:
         asks_wheelchair_time = True
     if re.search(r"attender|அட்டெண்டர்", text, re.IGNORECASE):
         parts.append("General ward-ல ஒரு attender free pass-ஓட தங்கலாம்; ICU-க்குள் தங்க முடியாது.")
-    if re.search(r"location|address|எப்படி\s*வர|எங்க", text, re.IGNORECASE):
+    if not identity_requested and re.search(r"location|address|எப்படி\s*வர|எங்க", text, re.IGNORECASE):
         parts.append("Hospital OMR-ல, Perungudi signal-லிருந்து 2 kilometres; location link SMS-ல அனுப்பலாம்.")
     if re.search(r"timing|OP|open|வேலை|எத்தனை\s*மணி", caller_text, re.IGNORECASE):
         parts.append("OP Monday to Saturday காலை 8 to 1, மாலை 4 to 8; Sunday காலை 9 to 1.")
@@ -1385,7 +1402,7 @@ def _deterministic_flow_reply(session: CallSession, caller_text: str) -> str | N
     if session.intent == "appointment.cancel":
         return _cancel_reply(session, caller_text)
     if session.intent == "info.general":
-        return _information_reply(caller_text)
+        return _information_reply(session, caller_text)
     return None
 
 

@@ -44,6 +44,8 @@ _TAMIL_RE = re.compile(r"[஀-௿]")
         ("discharge bill-ல ஒரு charge ரெண்டு தடவை", "billing.query"),
         ("என் அப்பாவோட case sheet records வேணும்", "records.request"),
         ("visiting hours என்ன?", "info.general"),
+        ("உங்க பேரு என்ன?", "info.general"),
+        ("hospital name and address சொல்லுங்க", "info.general"),
         ("மூணு நாளா காய்ச்சல் விடமாட்டேங்குது", "clinical.triage"),
         ("என் அப்பாவுக்கு நெஞ்சு வலி, மூச்சு வாங்குது", EMERGENCY_INTENT),
         ("ரெண்டு மணி நேரம் காக்க வெச்சீங்க, staff மோசமா பேசுனாங்க", "complaint.register"),

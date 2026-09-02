@@ -481,6 +481,43 @@ async def test_production_information_controller_answers_every_subject_without_e
     assert llm.calls == []
 
 
+async def test_production_information_controller_gives_agent_and_hospital_identity() -> None:
+    manager = _controlled_manager()
+    manager.start_call("conn-controlled-identity", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    response = [
+        e
+        async for e in manager.stream_utterance(
+            "conn-controlled-identity", llm, "உங்க பேரு என்ன?"
+        )
+    ][-1].text
+
+    assert "Gayathri" in response
+    assert "Aruvi Multispeciality Hospital" in response
+    assert "OMR, Perungudi, Chennai" in response
+    assert "2 kilometres" in response
+    assert llm.calls == []
+
+
+async def test_production_information_controller_answers_hospital_details_without_duplication() -> None:
+    manager = _controlled_manager()
+    manager.start_call("conn-controlled-hospital-details", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    response = [
+        e
+        async for e in manager.stream_utterance(
+            "conn-controlled-hospital-details", llm, "Hospital name and address சொல்லுங்க"
+        )
+    ][-1].text
+
+    assert response.count("Aruvi Multispeciality Hospital") == 1
+    assert response.count("Perungudi signal") == 1
+    assert "Gayathri" in response
+    assert llm.calls == []
+
+
 async def test_an_invented_identifier_is_never_spoken_to_the_caller() -> None:
     """The parroted-exemplar failure, end to end through the manager.
 

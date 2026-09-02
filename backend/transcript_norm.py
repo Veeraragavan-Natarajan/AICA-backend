@@ -128,6 +128,14 @@ _ENGLISH_WORDS: dict[str, str] = {
     "கைனகாலஜி": "Gynaecology",
     "கைனாகாலஜி": "Gynaecology",
     "கைனக்": "Gynaec",
+    # Human-microphone variants for "gynaecologist". The first form was
+    # observed live; the others are the same conservative whole-word spelling
+    # wobble this Tamil-only ASR produces for ன/னோ and the final pulli.
+    "மினோகாலஜிஸ்ட்": "Gynaecologist",
+    "கைனகாலஜிஸ்ட்": "Gynaecologist",
+    "கைனாகாலஜிஸ்ட்": "Gynaecologist",
+    "கைனோகாலஜிஸ்ட்": "Gynaecologist",
+    "கினோகாலஜிஸ்ட்": "Gynaecologist",
     "ஈஎன்டி": "ENT",
     "இஎன்டி": "ENT",
     "டென்டல்": "Dental",
@@ -168,6 +176,11 @@ _ENGLISH_WORDS: dict[str, str] = {
     "வீல்சேர்": "wheelchair",
     "வீல்செயர்": "wheelchair",
     "விசிட்டிங்": "visiting",
+    "விசிடிங்": "visiting",
+    "விஸிட்டிங்": "visiting",
+    "அவர்ஸ்": "hours",
+    "ஹவர்ஸ்": "hours",
+    "அவுர்ஸ்": "hours",
     "டைமிங்": "timing",
     "பார்க்கிங்": "parking",
     "கேன்டீன்": "canteen",
@@ -185,6 +198,10 @@ _ENGLISH_WORDS: dict[str, str] = {
     "அம்புலன்ஸ்": "ambulance",
     "ஆம்புலன்ஸ்": "ambulance",
     "ஹாஸ்பிட்டல்": "hospital",
+    "ஹாஸ்பிடல்": "hospital",
+    "ஹாஸ்படல்": "hospital",
+    "ஆஸ்பிட்டல்": "hospital",
+    "ஆஸ்பிடல்": "hospital",
     "ப்ரீ": "free",
     # Calendar words observed (or expected by the same Tamil-only ASR). These
     # stay in Latin script so the LLM sees the same register as the prompt and

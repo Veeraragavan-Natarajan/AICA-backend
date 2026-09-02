@@ -323,6 +323,11 @@ _INTENT_PATTERNS: list[tuple[str, str]] = [
     (
         "info.general",
         r"timing|visiting\s*hours|parking|canteen|wheelchair|ICU|attender|"
+        r"who\s+are\s+you|your\s+name|agent\s*name|"
+        r"உங்க\s*பேரு|உங்கள்\s*பெயர்|நீங்க\s*யாரு|யார்\s*பேசுற|"
+        r"hospital\s*(?:name|details?|address)|"
+        r"(?:ஹாஸ்பிட்டல்|ஆஸ்பத்திரி)\s*(?:பேரு|பெயர்|விவரம்|details?|address)|"
+        r"எந்த\s*(?:hospital|ஹாஸ்பிட்டல்|ஆஸ்பத்திரி)|"
         r"எப்படி\s*வர|எத்தனை\s*மணி|எங்க\s*இருக்கு|விசிட்டிங்|பார்க்கிங்|டைமிங்|"
         # Is the place open. Bound to the place, because a bare weekday or a
         # bare "open" is far more often part of a booking turn.

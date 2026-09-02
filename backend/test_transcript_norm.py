@@ -24,6 +24,18 @@ def test_english_hospital_words_come_back_in_latin_script() -> None:
     assert normalize_transcript("இன்ஷூரன்ஸ் கவர் ஆகுமா") == "insurance cover ஆகுமா"
 
 
+def test_live_stt_variants_for_info_and_gynaecology_are_normalized() -> None:
+    assert normalize_transcript("மினோகாலஜிஸ்ட் இருக்காங்களா உங்க ஹாஸ்பிடல் ல") == (
+        "Gynaecologist இருக்காங்களா உங்க hospital ல"
+    )
+    for heard in (
+        "விசிட்டிங் அவர்ஸ் என்ன",
+        "விசிடிங் ஹவர்ஸ் என்ன",
+        "விஸிட்டிங் அவுர்ஸ் என்ன",
+    ):
+        assert normalize_transcript(heard) == "visiting hours என்ன", heard
+
+
 def test_the_asr_spelling_wobble_is_covered() -> None:
     """Three runs of the same phrase produced three spellings of the same word.
     The model is not consistent about the pulli or about ண/ன, so every variant
