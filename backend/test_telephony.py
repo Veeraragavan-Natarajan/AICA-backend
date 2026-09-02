@@ -96,6 +96,9 @@ class _FakeTts:
 
 def _make_manager(agent_name: str = "Gayathri") -> ConversationManager:
     manager = ConversationManager(ConversationSettings(agent_name=agent_name))
+    # These integration tests inject scripted model turns to exercise the
+    # telephony path below the production five-flow controller.
+    manager._deterministic_flows = False
     # Stub the builder rather than reading the real prompt files: these tests
     # assert telephony plumbing, not prompt content.
     manager.prompts._core = TEMPLATE
@@ -224,7 +227,7 @@ def test_start_event_triggers_greeting_audio() -> None:
 
 def test_media_stream_drives_asr_conversation_tts_and_stop_cleans_up(monkeypatch) -> None:
     reply_text = "சரி appointment book பண்ணறேன்"
-    transcript_text = "எனக்கு appointment வேணும்"
+    transcript_text = "எனக்கு Cardiology-ல ஒரு appointment வேணும்"
     # Enough scripted speech frames to clear the onset debounce, then enough
     # trailing silence to close the turn.
     # Silence tail read from settings, not hard-coded: the segmenter closes

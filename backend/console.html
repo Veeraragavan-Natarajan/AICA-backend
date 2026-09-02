@@ -141,17 +141,14 @@
 </div>
 
 <script>
-// Sample turns are lifted from the golden PDF flows so a tester can exercise
-// several intents (and the emergency override) without composing Tamil by hand.
+// One unambiguous starter turn for each flow in SUPPORTED_INTENTS. Keep these
+// aligned with the five-flow caller language covered by test_mvp_scope.py.
 const SAMPLES = [
-  ["Booking",   "Cardiology-ல ஒரு appointment book பண்ணணும்."],
-  ["Identify",  "பேஷண்ட் நான் தான். என் பேரு முருகேசன், வயசு 58."],
-  ["Number",    "98407 21534."],
-  ["Refill",    "என் அப்பாவுக்கு tablets தீர்ந்துடுச்சு. Refill வேணும்."],
-  ["Report",    "நேத்து test பண்ணேன். Report வந்துடுச்சா?"],
-  ["Billing",   "Discharge bill-ல ஒரு charge ரெண்டு தடவை போட்டு இருக்கீங்க."],
-  ["Info",      "Visiting hours என்ன?"],
-  ["Emergency", "சார், என் அப்பாவுக்கு நெஞ்சு வலி. மூச்சு வாங்குது!"],
+  ["Book appointment",       "Cardiology-ல ஒரு appointment book பண்ணணும்."],
+  ["Reschedule appointment", "நாளைக்கு appointment இருக்கு, வேற date-க்கு மாத்தணும்."],
+  ["Cancel appointment",     "நாளைக்கு dermatology appointment இருக்கு. அதை cancel பண்ணிடுங்க."],
+  ["General information",    "Visiting hours என்ன?"],
+  ["Emergency",              "சார், என் அப்பாவுக்கு நெஞ்சு வலி. மூச்சு வாங்குது!"],
 ];
 
 const $ = (id) => document.getElementById(id);

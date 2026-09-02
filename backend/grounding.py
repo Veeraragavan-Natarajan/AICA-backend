@@ -154,8 +154,37 @@ _ACTION_CLAIMS: tuple[tuple[str, frozenset[str], re.Pattern[str]], ...] = (
     (
         AMBULANCE_CLAIM,
         frozenset({"dispatchAmbulance"}),
+        # FUTURE forms as well as completed ones, and this row is the one place
+        # that exception is right. Everywhere else "offering to do something is
+        # not claiming to have done it" holds, but there is nothing to offer
+        # here: this process cannot dispatch, so "ambulance உடனே வரும்" is not
+        # an offer, it is a promise of an arrival nobody has arranged. Observed
+        # live at temperature 0 on a chest-pain call - "இப்பவே 108-க்கு call
+        # பண்ணுங்க, ambulance உடனே வரும்" - with the completed-only pattern
+        # letting it through to a caller who then stopped calling 108.
+        #
+        # The paramedic exclusion is not incidental. Flow 18 wants the agent to
+        # say "Ambulance-ல paramedic வர்றாங்க, அவங்க பாத்துட்டு கொடுப்பாங்க"
+        # when refusing aspirin - the people in the ambulance are coming, which
+        # is a statement about who administers medicine and not a promise that
+        # a vehicle is on its way. Only the AMBULANCE arriving is the claim.
         re.compile(
-            r"ambulance[^.!?]{0,40}(?:அனுப்பிட்ட|அனுப்பிவிட்ட|அனுப்பினேன்|கிளம்பிட்ட|கிளம்பிடுச்)",
+            r"ambulance(?:(?!paramedic|பாராமெடிக்)[^.!?]){0,40}"
+            r"(?:அனுப்பிட்ட|அனுப்பிவிட்ட|அனுப்பினேன்|கிளம்பிட்ட|கிளம்பிடுச்|"
+            r"வரும்|வந்துடும்|வந்துக்கிட்|வர்றது|கிளம்பு|"
+            r"sent|dispatch|on\s*the\s*way|coming)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # Same reasoning: flow 18 forbids "the ER team is pre-alerted" outright
+        # unless a tool confirmed it, and there is no such tool. Observed in the
+        # same turn as the ambulance promise above.
+        "said the ER team has been alerted",
+        frozenset({"dispatchAmbulance", "alertEmergencyTeam"}),
+        re.compile(
+            r"(?:ER|emergency)\s*(?:team|desk|department)?[^.!?]{0,30}"
+            r"(?:சொல்லிட|சொல்லிவிட|தெரிவிச்|alert|inform|ready|தயாரா)",
             re.IGNORECASE,
         ),
     ),

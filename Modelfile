@@ -38,11 +38,29 @@ PARAMETER temperature 0.3
 # repeating - and make this failure much worse. Measured on this server: at
 # frequency_penalty 0.1 the model repeated one token for the whole completion.
 #
-# repeat_last_n 128 rather than Ollama's default 64 because a Tamil word is
-# several tokens, so 64 remembers only about a dozen words - less than one turn
-# of this agent's output (LLM_MAX_TOKENS is 160).
-PARAMETER repeat_penalty 1.15
-PARAMETER repeat_last_n 128
+# 1.15/128 -> 1.05/64, and the REASON is the same fact the old comment used to
+# argue the other way: a Tamil word is several tokens. Tamil is agglutinative,
+# so a correct reply re-uses the same case suffixes and light verbs constantly
+# - -ஐ, -ல, -க்கு, சொல்லுங்க, பண்ணுங்க, குறிச்சுக்கிட்டேன். Penalising a
+# 128-token window at 1.15 therefore penalised most of a legitimate turn
+# against itself and pushed the decoder onto its second choice mid-phrase. It
+# did not produce wrong answers, it produced BROKEN ONES. Measured, same
+# prompt, temperature 0, only these two numbers changed:
+#
+#   1.15/128  "Amlodipine 5 mg ரெண்டு மாசத்துக்கு வேணும் என்று போலி அடியில சொல்லுங்க Sir?"
+#   1.05/64   "Amlodipine 5 mg ரெண்டு மாசத்துக்கு வேணும் Sir?"
+#
+# and on a lab turn 1.15/128 emitted a bare English "- verified." plus a claim
+# to have sent an SMS, both of which 1.05/64 dropped.
+#
+# The anti-loop job the old value was doing is NOT abandoned, it is aimed
+# better. A degenerate loop ("முழு முழு முழு முழு") repeats inside roughly ten
+# tokens, so a 64-token window still sits well outside it while no longer
+# covering a whole turn. The actual guarantee remains where it always was and
+# does not depend on this number at all: conversation.py refuses to SPEAK a
+# looping clause, and LLM_MAX_TOKENS 160 bounds any runaway.
+PARAMETER repeat_penalty 1.05
+PARAMETER repeat_last_n 64
 
 # FULL GPU OFFLOAD. This was forbidden for most of this project's life and the
 # reversal is a MEASUREMENT, not a change of mind - re-read before touching it.

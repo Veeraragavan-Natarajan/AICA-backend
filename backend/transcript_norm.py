@@ -96,11 +96,83 @@ _ENGLISH_WORDS: dict[str, str] = {
     "பேஷண்ட்": "patient",
     "ஆப்பரேஷன்": "operation",
     "சர்ஜரி": "surgery",
+    # EVERY department, not the five the exemplars happen to use.
+    #
+    # The router's department fallback (prompt_builder.names_a_department) and
+    # the model both see Latin department names; the ASR can only emit Tamil
+    # script. A department missing from here reaches the router as Tamil the
+    # patterns do not know, and the caller is told the desk cannot help with
+    # booking - the exact failure this MVP exists to not have.
+    #
+    # Two or three spellings each, for the same reason as "appointment" above:
+    # this ASR is not consistent about the pulli, ண/ன, or ா/அ.
     "கார்டியாலஜி": "Cardiology",
+    "கார்டியாலாஜி": "Cardiology",
+    "காத்யாலோஜி": "Cardiology",
+    "கார்டியாலஜிஸ்ட்": "Cardiologist",
+    "கார்டியாலாஜிஸ்ட்": "Cardiologist",
     "டெர்மட்டாலஜி": "Dermatology",
+    "டெர்மடாலஜி": "Dermatology",
+    "டெர்மட்டாலோஜி": "Dermatology",
     "நியூராலஜி": "Neurology",
+    "நியூரோலஜி": "Neurology",
+    "நியூரோ": "Neuro",
     "ஆர்த்தோ": "Ortho",
+    "ஆர்த்தோபெடிக்": "Orthopaedics",
+    "ஆர்த்தோபீடிக்": "Orthopaedics",
+    "ஆர்த்தோபெடிக்ஸ்": "Orthopaedics",
+    "ஆர்த்தோபீடிக்ஸ்": "Orthopaedics",
     "பீடியாட்ரிக்": "Paediatrics",
+    "பீடியாட்ரிக்ஸ்": "Paediatrics",
+    "பீடியாட்ரிஷியன்": "Paediatrician",
+    "கைனகாலஜி": "Gynaecology",
+    "கைனாகாலஜி": "Gynaecology",
+    "கைனக்": "Gynaec",
+    "ஈஎன்டி": "ENT",
+    "இஎன்டி": "ENT",
+    "டென்டல்": "Dental",
+    "டெண்டல்": "Dental",
+    "டென்டிஸ்ட்": "Dentist",
+    "ஆப்தல்மாலஜி": "Ophthalmology",
+    "ஆப்தால்மாலஜி": "Ophthalmology",
+    "யூராலஜி": "Urology",
+    "யூரோலஜி": "Urology",
+    "காஸ்ட்ரோ": "Gastro",
+    "கேஸ்ட்ரோ": "Gastro",
+    "காஸ்ட்ரோஎன்ட்ராலஜி": "Gastroenterology",
+    "பல்மனாலஜி": "Pulmonology",
+    "பல்மோனாலஜி": "Pulmonology",
+    "நெஃப்ராலஜி": "Nephrology",
+    "நெஃப்ரோலோஜி": "Nephrology",
+    "சைக்யாட்ரி": "Psychiatry",
+    "சைகியாட்ரி": "Psychiatry",
+    "ஆன்காலஜி": "Oncology",
+    "ஆங்காலஜி": "Oncology",
+    "என்டோக்ரினாலஜி": "Endocrinology",
+    "டயாபடாலஜி": "Diabetology",
+    "பிசியோதெரபி": "Physiotherapy",
+    "பிசியோ": "Physio",
+    "டயட்டீஷியன்": "Dietician",
+    "டயட்டிஷியன்": "Dietician",
+    "ஸ்பெஷலிஸ்ட்": "specialist",
+    "ஸ்பெஷாலிட்டி": "speciality",
+    # The rest of the five flows' own vocabulary, same rules. reschedule and
+    # its synonyms matter as much as the departments: they are the ONLY trigger
+    # appointment.reschedule has that a caller reliably says in English.
+    "ரீஷெட்யூல்": "reschedule",
+    "ரீஸ்கெஜூல்": "reschedule",
+    "ரீஷெட்யூள்": "reschedule",
+    "போஸ்ட்போன்": "postpone",
+    "போஸ்ட்கோன்": "postpone",
+    "ப்ரீபோன்": "prepone",
+    "வீல்சேர்": "wheelchair",
+    "வீல்செயர்": "wheelchair",
+    "விசிட்டிங்": "visiting",
+    "டைமிங்": "timing",
+    "பார்க்கிங்": "parking",
+    "கேன்டீன்": "canteen",
+    "எமர்ஜென்சி": "emergency",
+    "அட்மிஷன்": "admission",
     # Observed live over the microphone, not through the TTS round-trip, and
     # the difference matters: the generated lexicon below learned "ambulance"
     # as "அண்டிலின்ஸ்" because that is what the ASR does to the TTS voice
@@ -114,6 +186,48 @@ _ENGLISH_WORDS: dict[str, str] = {
     "ஆம்புலன்ஸ்": "ambulance",
     "ஹாஸ்பிட்டல்": "hospital",
     "ப்ரீ": "free",
+    # Calendar words observed (or expected by the same Tamil-only ASR). These
+    # stay in Latin script so the LLM sees the same register as the prompt and
+    # can distinguish a date from an ordinary Tamil number word.
+    "மண்டே": "Monday",
+    "ட்யூஸ்டே": "Tuesday",
+    "டியூஸ்டே": "Tuesday",
+    "வென்ஸ்டே": "Wednesday",
+    "வெட்னஸ்டே": "Wednesday",
+    "தர்ஸ்டே": "Thursday",
+    "தேர்ஸ்டே": "Thursday",
+    "ஃப்ரைடே": "Friday",
+    "ப்ரைடே": "Friday",
+    "ப்ரிட்": "Friday",
+    "சாட்டர்டே": "Saturday",
+    "சாடர்டே": "Saturday",
+    "சண்டே": "Sunday",
+    "ஜனவரி": "January",
+    "ஃபெப்ரவரி": "February",
+    "பெப்ரவரி": "February",
+    "மார்ச்": "March",
+    "ஏப்ரல்": "April",
+    "மே": "May",
+    "ஜூன்": "June",
+    "ஜூலை": "July",
+    "ஆகஸ்ட்": "August",
+    "செப்டம்பர்": "September",
+    "அக்டோபர்": "October",
+    "நவம்பர்": "November",
+    "டிசம்பர்": "December",
+    "ஃபர்ஸ்ட்": "1st",
+    "பர்ஸ்ட்": "1st",
+    "செகண்ட்": "2nd",
+    "தேர்ட்": "3rd",
+    "ஃபோர்த்": "4th",
+    "பிஃப்த்": "5th",
+    "ஃபிப்த்": "5th",
+    "சிக்ஸ்த்": "6th",
+    "ஸிக்ஸ்த்": "6th",
+    "செவன்த்": "7th",
+    "எய்த்": "8th",
+    "நைந்த்": "9th",
+    "டென்த்": "10th",
 }
 
 # Generated entries shorter than this are dropped. See the merge below.
@@ -256,6 +370,71 @@ _MIN_DIGIT_RUN_WHEN_WHOLE_UTTERANCE = 2
 
 _TOKEN_RE = re.compile(r"(\s+)")
 
+_MONTHS = frozenset(
+    {
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    }
+)
+
+
+def _ordinal(day: int) -> str:
+    suffix = "th" if 10 <= day % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    return f"{day}{suffix}"
+
+
+def _rewrite_calendar_dates(words: list[str]) -> list[str]:
+    """Recognise a spoken cardinal as a date only beside a month.
+
+    `சிக்ஸ்` on its own remains untouched by the conservative digit-run rules,
+    but `சிக்ஸ் செப்டம்பர்` is unambiguously a calendar date and becomes
+    `6th September`. Month-first speech is handled too.
+    """
+    out = list(words)
+    for index, word in enumerate(words):
+        core = word.rstrip(".,?!")
+        month = _ENGLISH_WORDS.get(core, core)
+        if month not in _MONTHS:
+            continue
+        for neighbour in (index - 1, index + 1):
+            if not 0 <= neighbour < len(words):
+                continue
+            candidate = words[neighbour]
+            candidate_core = candidate.rstrip(".,?!")
+            digit = _DIGIT_WORDS.get(candidate_core)
+            if digit is None or not 1 <= int(digit) <= 9:
+                continue
+            trailing = candidate[len(candidate_core):]
+            out[neighbour] = _ordinal(int(digit)) + trailing
+    return out
+
+
+def _rewrite_labeled_numbers(words: list[str]) -> list[str]:
+    """Convert a single spoken digit when its label makes the meaning clear.
+
+    Ordinary Tamil numbers stay protected by the digit-run threshold, while
+    `number மூணு` and `வீட்டு எண் மூணு` are unambiguously identifiers inside
+    an address and become `number 3` / `வீட்டு எண் 3`.
+    """
+    out = list(words)
+    for index, word in enumerate(words):
+        core = word.rstrip(".,?!").casefold()
+        previous = words[index - 1].rstrip(".,?!").casefold() if index else ""
+        labeled = previous in {"number", "no", "எண்", "நம்பர்"}
+        if not labeled:
+            continue
+        # Leave a full dictated phone-number run intact for _join_digit_runs;
+        # rewriting only its first digit would split `984...` into `9 84...`.
+        next_core = words[index + 1].rstrip(".,?!") if index + 1 < len(words) else ""
+        if next_core in _DIGIT_WORDS:
+            continue
+        digit = _DIGIT_WORDS.get(word.rstrip(".,?!"))
+        if digit is None:
+            continue
+        trailing = word[len(word.rstrip(".,?!")):]
+        out[index] = digit + trailing
+    return out
+
 
 def _rewrite_english(token: str) -> str:
     """Map one whole word, preserving any trailing punctuation."""
@@ -300,6 +479,8 @@ def normalize_transcript(text: str) -> str:
     if not text:
         return text
     words = [w for w in _TOKEN_RE.split(text) if w and not w.isspace()]
+    words = _rewrite_calendar_dates(words)
+    words = _rewrite_labeled_numbers(words)
     whole_utterance_is_digits = all(w.rstrip(".,?!") in _DIGIT_WORDS for w in words)
     minimum = (
         _MIN_DIGIT_RUN_WHEN_WHOLE_UTTERANCE

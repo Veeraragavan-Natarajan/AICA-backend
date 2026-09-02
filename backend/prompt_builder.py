@@ -36,9 +36,126 @@ _FLOW_HEADER_RE = re.compile(r"^---\s*FLOW\s+(\d+)\s*—\s*([\w.]+).*?---\s*$", 
 # tool result, so they ship with that playbook (see main_prompt.txt Sec8/Sec10).
 DEFAULT_FLOW = "info.general"
 
+# THE FIVE FLOWS THIS DESK ACTUALLY HANDLES.
+#
+# main_prompt.txt still specifies all twenty and parse_flow_playbooks() still
+# reads all twenty out of it - the spec is not the deliverable. What ships is
+# these five, and every other flow is answered with the scope line in
+# conversation.py instead of being improvised at by a 4B model.
+#
+# Why: a flow the desk half-answers is worse than one it declines. The other
+# fifteen need tools this runtime does not have (a bill amount, a lab value, a
+# policy limit, a referral status) and their playbooks demonstrate stating
+# facts the process cannot know. Declining them is the honest answer AND the
+# fast one - it costs no LLM call at all.
+SUPPORTED_INTENTS = frozenset(
+    {
+        "appointment.book",
+        "appointment.reschedule",
+        "appointment.cancel",
+        "info.general",
+        "emergency.escalate",
+    }
+)
+
+# Which flow a bare department name belongs to. "Ortho-க்கு வரணும்" carries no
+# booking verb at all and matches no trigger below, but there is only one thing
+# a caller naming a department wants from this desk.
+DEPARTMENT_INTENT = "appointment.book"
+
+# Every department the hospital runs, in both scripts, because a caller says
+# "cardiology" and the ASR may hand over either "Cardiology" (normalised by
+# transcript_norm.py) or the raw Tamil transliteration.
+#
+# Only consulted when nothing else matched, and only on a turn that has not
+# yet picked a flow - see names_a_department(). A department name is also a
+# perfectly ordinary ANSWER mid-call ("எந்த department?" / "Cardiology"), and
+# re-routing a cancellation to a booking because the caller answered the
+# question would be worse than the miss this closes.
+#
+# Tamil stems are chosen for distinctiveness, not completeness: கண் (eye) and
+# தோல் (skin) are left out because they are prefixes of கண்டிப்பா and தோல்வி,
+# and a false department is a wrongly-routed call.
+_DEPARTMENT_RE = re.compile(
+    r"cardio|ortho|paediat|pediat|neuro|gyn|obstetric|derma|dental|dentist|"
+    r"ophthal|urolog|gastro|pulmo|psychiat|nephro|oncolog|diabet|endocrin|"
+    r"physio|dietici|dietitian|nutrition|vaccin|immunis|immuniz|"
+    r"\bENT\b|ear\s*nose|\beye\b|\bskin\b|\bchest\s*(?:doctor|special)|"
+    r"general\s*(?:medicine|surgery)|\bdepartment\b|specialist|"
+    r"கார்டி|இதய|ஆர்த்தோ|எலும்பு|குழந்தை|நியூரோ|நரம்பு|மகப்பேறு|சிறுநீரக|"
+    r"மனநல|பிசியோ|தடுப்பூசி|டெர்ம|டென்ட|கைனக|டிபார்ட்மெண|டிபார்ட்மென",
+    re.IGNORECASE,
+)
+
+
+def names_a_department(text: str) -> bool:
+    """Whether the caller named a hospital department or specialty."""
+    return bool(_DEPARTMENT_RE.search(text))
+
+
+# The master prompt documents a future TOOL-ENABLED agent. This runtime has no
+# clinical-record tools, so three of the five playbooks demonstrate
+# claims this process cannot make: reading an MRN back off a mobile number,
+# offering slots out of searchSlots, and quoting a fee. Emergency dispatch is
+# intentionally treated as a simulated built-in capability for this MVP.
+#
+# These replace the playbook body rather than being appended after it, keeping
+# the runtime contract short and free of unavailable record-system operations.
+#
+# What must NOT go with them is the flow's exemplars: rules describe the
+# register, examples ARE the register, and a previous attempt at this that also
+# dropped the exemplars measured 49% Tamil against a 65% target. build() keeps
+# them.
+#
+# info.general has no entry and keeps its playbook whole - its standing facts
+# (OP timings, visiting hours, parking) are the one set of facts the agent may
+# state without a tool, so there is nothing there to contradict.
+_RUNTIME_PLAYBOOK_OVERRIDES: dict[str, str] = {
+    "emergency.escalate": """Emergency outranks every other flow. Speed beats everything: no verification, no MRN, no insurance, no money.
+React with urgency and compassion first. Say you are staying on the line and dispatching an ambulance immediately, then ask for the ADDRESS before any clinical question. Read the address back exactly once and say the ambulance has been dispatched. If they already gave the address, never ask again.
+Copy the caller's address VERBATIM. Never translate, expand, autocorrect, infer a cross/street/floor, or replace a locality with a similar-sounding one. Never copy a patient relationship from an example: use only the relationship stated in this call, otherwise say Patient.
+Then assess in SHORT questions, one per turn — is the patient speaking, are the eyes open, when did it start, is the breathing laboured.
+Give safe positioning only: never let a chest-pain patient walk, sit them propped up rather than flat, loosen tight clothing, clear the crowd. Ask them to put all current medicines in one bag for the paramedic, and to open the door and the gate.
+Tell them to say immediately if speech stops, if the patient collapses, or if breathing stops.
+Never give an ETA and never say the ER was alerted. Never authorise any medicine, aspirin included. Never name a condition. Never end the call.""",
+    "appointment.book": """You are TAKING DOWN a booking request, not completing one. Never state or read back an MRN, a slot, a doctor's availability, a fee, a block/floor/room, or an appointment ID.
+Acknowledge what they just gave you in two or three words — by name if they gave a name — and then ask for ONE detail you do not have yet. You need: patient name, department or doctor, the day and part of the day, and a callback mobile number. Never ask for one the caller has already said, even in passing: asking again is the commonest way this call goes wrong.
+The caller may correct any detail mid-call. The LATEST value replaces the earlier one immediately: acknowledge only the new value, never repeat the old value, and continue from the next missing detail. A clear correction is not a hearing problem.
+Any department the caller names is fine — take it down in their words. Never say a department does not exist and never substitute a different one.
+Close by saying the desk will confirm the slot and call back, and that an SMS follows.""",
+    "appointment.reschedule": """You are TAKING DOWN a reschedule request. Never read back a booking you have not been told, never offer a slot, never confirm the old one is cancelled.
+Acknowledge what they just gave you in two or three words, then ask for ONE detail you do not have yet. You need: patient name, the existing appointment's day, the new day and part of the day, and a callback mobile number. Never ask for one they have already said — "அடுத்த வெள்ளிக்கிழமை மாலை" is BOTH the day and the time, so do not then ask what time.
+Say the desk will confirm the new slot and call back, that the old booking stays until then, and that there is no extra charge.""",
+    "appointment.cancel": """You are TAKING DOWN a cancellation request. Never state a cancellation reference, a refund amount, a refund date, or that anything has been cancelled.
+Offer a reschedule ONCE, gently. If they decline, cancel without a second attempt and never make them justify it.
+Acknowledge what they just gave you in two or three words — by name if they gave a name — and then ask for ONE detail you do not have yet. You need: patient name, the appointment day, and the appointment ID or mobile number. Never ask for one they have already said. Ask the reason only to log it, and offer a neutral category.
+If an advance was paid, say the billing desk will confirm the refund route and timeline in the callback. Never promise a refund date.""",
+}
+
 # Emergency outranks everything and is already in the core prompt; it is listed
 # here too so an explicit emergency turn still pulls in flow 18's full playbook.
 EMERGENCY_INTENT = "emergency.escalate"
+
+# Strong emergencies may enter the dispatch sequence immediately. Distress
+# fragments are routed to the emergency safety lane too, but conversation.py
+# asks what is wrong before dispatching; "ஐயோ ... முடியல" is urgent evidence,
+# not enough clinical detail to invent a symptom or diagnosis.
+_STRONG_EMERGENCY_PATTERN = (
+    r"நெஞ்சு\s*வலி|chest\s*pain|மயக்க|மூச்சு|வலிப்ப|seizure|"
+    r"unconscious|ரத்தம்\s*(போ|வ|கொட்|நி)|ரத்த\s*போக்கு|bleeding|சுத்த\s*முடிய|108|"
+    r"உயிர|தூக்கி|விழுந்துட்டா|பேச\s*முடிய|"
+    r"ambulance|அம்புல|ஆம்புல|emergency|எமர்ஜென்|அவசர"
+)
+_AMBIGUOUS_DISTRESS_PATTERN = (
+    r"(?:ஐயோ|அய்யோ|காப்பாத்த|help|பயமா|தாங்க)[^.?!]{0,40}(?:முடியல|தாங்க|கஷ்டம்|வலி)|"
+    r"(?:முடியல|தாங்க\s*முடியல|கஷ்டமா)[^.?!]{0,30}(?:ஐயோ|அய்யோ|காப்பாத்த|help)"
+)
+_STRONG_EMERGENCY_RE = re.compile(_STRONG_EMERGENCY_PATTERN, re.IGNORECASE)
+
+
+def is_explicit_emergency(text: str) -> bool:
+    """Whether `text` names a concrete emergency rather than distress alone."""
+    return bool(_STRONG_EMERGENCY_RE.search(text))
 
 # Ordered most-specific first: the first intent whose pattern matches wins, so
 # e.g. "report வந்துடுச்சா" routes to lab.result_inquiry rather than lab.book.
@@ -73,10 +190,18 @@ _INTENT_PATTERNS: list[tuple[str, str]] = [
         # "அவசர" (urgent) is included knowing it also matches "அவசரம் இல்ல"
         # (no hurry). That is the trade above, taken deliberately.
         EMERGENCY_INTENT,
-        r"நெஞ்சு\s*வலி|chest\s*pain|மயக்க|மூச்சு|வலிப்ப|seizure|"
-        r"unconscious|ரத்தம்\s*(போ|வ|கொட்)|bleeding|சுத்த\s*முடிய|108|"
-        r"உயிர|தூக்கி|விழுந்துட்டா|பேச\s*முடிய|"
-        r"ambulance|அம்புல|ஆம்புல|emergency|எமர்ஜென்|அவசர",
+        rf"{_STRONG_EMERGENCY_PATTERN}|{_AMBIGUOUS_DISTRESS_PATTERN}",
+    ),
+    (
+        # Services this desk does not handle. They keep their own rows rather
+        # than falling through to "no match" because a POSITIVE identification
+        # is what lets conversation.py say "not us" instead of handing the turn
+        # to the model with the info.general playbook and hoping.
+        "other.desk",
+        r"certificate|blood\s*(bank|avail|stock|donor)|"
+        r"(?:a|b|ab|o)\s*(?:positive|negative|\+|-)\s*blood|"
+        r"mobile\s*(number\s*)?(update|change)|"
+        r"phone\s*(number\s*)?(update|change)|contact\s*(update|change)",
     ),
     (
         "complaint.escalation_angry",
@@ -152,14 +277,30 @@ _INTENT_PATTERNS: list[tuple[str, str]] = [
         r"ஃபாலோஅப்|ரிவ்யூ|சொன்ன\s*மாதிரி\s*வர",
     ),
     (
+        # The five supported flows carry MORE synonyms than the fifteen, and
+        # deliberately: a caller who says "மாத்தி தர முடியுமா" instead of
+        # "reschedule" is one of the five calls this MVP exists to answer, and
+        # the cost of missing them is no longer a slightly-wrong playbook - it
+        # is the scope line, told to a caller the desk does serve.
         "appointment.reschedule",
         r"postpone|prepone|reschedule|date\s*மாத்த|நேரம்\s*மாத்த|வேற\s*date|"
         r"அன்னைக்கு\s*வர\s*முடியா|போஸ்ட்போன்|ரீஷெட்யூல்|தேதி\s*மாத்த|"
-        r"நாள்.{0,8}மாத்த|நாளுக்கு\s*மாத்த|வேற\s*நாள்|வேற\s*நேரம்",
+        r"நாள்.{0,8}மாத்த|நாளுக்கு\s*மாத்த|வேற\s*நாள்|வேற\s*நேரம்|"
+        # The bare verb. "மாத்துங்க" / "மாத்தி தர முடியுமா" / "மாத்திக்கலாமா"
+        # are how this is actually said; every form above needs the caller to
+        # have named the thing being changed first, and they usually have not.
+        r"மாத்துங்க|மாத்தி\s*(?:தர|கொடு|போடு|விடு)|மாத்திக்க|மாற்றி\s*தர|"
+        r"தள்ளி\s*(?:போடு|வெ|வைக்க)|முன்னாடி\s*போடு|"
+        r"(?:date|time|நாள்|நேரம்|booking|appointment|slot)\s*(?:-?ஐ\s*)?change",
     ),
     (
         "appointment.cancel",
-        r"cancel|ரத்து|வேணாம்.*appointment|appointment.*வேணாம|கேன்சல்|கான்சல்",
+        # Bound ரத்து as a word: without this, வாரத்துக்கு contains the same
+        # four code points and a physio frequency answer became a cancellation.
+        r"cancel|(?<!\w)ரத்து(?!\w)|வேணாம்.*appointment|appointment.*வேணாம|கேன்சல்|கான்சல்|"
+        # After reschedule, so "வர மாட்டேன், வேற நாள் இருக்கா" is still a
+        # reschedule and only a flat refusal to come lands here.
+        r"வர\s*மாட்ட|appointment.{0,20}எடுத்து(?:டு|விடு)|வேணாம்னு\s*சொல்ல",
     ),
     (
         "appointment.confirm",
@@ -171,55 +312,27 @@ _INTENT_PATTERNS: list[tuple[str, str]] = [
         "appointment.book",
         r"appointment|book\s*பண்ண|doctor.*பாக்க|consult|slot|சந்திக்க|அப்பாயின்|அபாயின்|"
         r"புக்\s*பண்ண|டாக்டர.{0,4}\s*பாக்க|கன்சல்ட்|ஸ்லாட்|see\s+a\s+[\w\s]{0,16}doctor|"
-        r"time\s*வேண|நேரம்\s*வேண|டாக்டர்.{0,8}(வேண|இருக்கா)",
+        r"time\s*வேண|நேரம்\s*வேண|டாக்டர்.{0,8}(வேண|இருக்கா)|"
+        # Showing someone TO a doctor is the commonest phrasing of all and
+        # contains neither "appointment" nor "book".
+        r"(?:doctor|டாக்டர்|dr\.?)[^.?!]{0,20}(?:காட்ட|பாக்க|meet)|"
+        r"(?:doctor|டாக்டர்|dr\.?)\s*(?:appointment|அப்பாயின்)|"
+        r"checkup|check.?up|செக்கப்|master\s*health|"
+        r"token\s*வேண|டோக்கன்\s*வேண|OP-?க்கு\s*வர",
     ),
     (
         "info.general",
         r"timing|visiting\s*hours|parking|canteen|wheelchair|ICU|attender|"
-        r"எப்படி\s*வர|எத்தனை\s*மணி|எங்க\s*இருக்கு|விசிட்டிங்|பார்க்கிங்|டைமிங்",
+        r"எப்படி\s*வர|எத்தனை\s*மணி|எங்க\s*இருக்கு|விசிட்டிங்|பார்க்கிங்|டைமிங்|"
+        # Is the place open. Bound to the place, because a bare weekday or a
+        # bare "open" is far more often part of a booking turn.
+        r"(?:hospital|OP|clinic|ஹாஸ்பிட்டல்|ஆஸ்பத்திரி)[^.?!]{0,15}"
+        r"(?:open|close|வேலை|இருக்கும|திறந்|சாத்)|"
+        r"address\s*சொல்|எப்படி\s*வந்து\s*சேர|location",
     ),
 ]
 
 _COMPILED_PATTERNS = [(intent, re.compile(pattern, re.IGNORECASE)) for intent, pattern in _INTENT_PATTERNS]
-
-
-# Is this turn hospital business AT ALL, whatever flow it belongs to?
-#
-# detect_intent() returning None is NOT evidence that a caller is off-topic,
-# and treating it that way is a mistake that costs a real request. The table
-# above needs a specific phrasing to fire, and the twenty flows have gaps
-# between them: "என் details check பண்ணுங்க" is an ordinary thing to ring a
-# hospital about and matches nothing in it.
-#
-# So being off-topic has to be established POSITIVELY - no flow matched AND
-# nothing in the turn is hospital business - and this is the second half. It is
-# deliberately generous and deliberately NOT flow-specific: departments, staff,
-# body and symptom words, the desk's own verbs. The two errors are not
-# symmetric. Missing an off-topic turn costs nothing new (the model improvises
-# from info.general, exactly as it did before this existed); deflecting a real
-# request tells a caller with a genuine problem to go away.
-_HOSPITAL_CONTEXT_RE = re.compile(
-    r"hospital|clinic|doctor|dr\.?\s|patient|nurse|ward|ICU|OP|emergency|ambulance|"
-    r"appointment|department|medicine|medical|health|surgery|operation|scan|test|report|"
-    r"bill|payment|insurance|policy|record|discharge|admit|treatment|consult|checkup|"
-    r"check|details|help|token|counter|desk|reception|visit|timing|pharmacy|lab|"
-    r"blood|tablet|prescription|MRN|refill|referral|complaint|"
-    r"ஹாஸ்பிட்டல்|ஆஸ்பத்திரி|மருத்துவ|மருந்து|டாக்டர|நர்ஸ்|பேஷண்ட|நோயாளி|"
-    r"உடம்பு|உடல்|வலி|காய்ச்சல|சுகர்|ரத்த|மாத்திரை|சிகிச்சை|அறுவை|ஆபரேஷன்|"
-    r"வார்டு|பரிசோதனை|ரிப்போர்ட|பில்|கட்டணம்|காப்பீ|சிகிச|செக்கப|"
-    r"அப்பாயின்|டெஸ்ட|ஸ்கேன|மெடிக|நேரம்|டைமிங|விசிட",
-    re.IGNORECASE,
-)
-
-
-def looks_like_hospital_business(text: str) -> bool:
-    """Whether this turn is about the hospital at all, whatever flow it is.
-
-    Used only to decide whether an unroutable turn is genuinely off-topic. See
-    the comment above _HOSPITAL_CONTEXT_RE for why the test is positive rather
-    than "detect_intent found nothing".
-    """
-    return bool(_HOSPITAL_CONTEXT_RE.search(text))
 
 
 def detect_intent(text: str) -> str | None:
@@ -227,10 +340,32 @@ def detect_intent(text: str) -> str | None:
 
     Deterministic and cheap on purpose - a voice turn cannot afford an extra
     LLM round-trip just to pick which playbook to show.
+
+    Three passes, and the order IS the scope policy:
+
+      1. Emergency. Absolute priority, as it is everywhere else.
+      2. The five SUPPORTED_INTENTS, in table order. A supported flow always
+         beats an unsupported one that matched the same sentence, because the
+         two mistakes are not the same size: taking "scan-க்கு appointment
+         வேணும்" down as a consult booking is a slightly wrong playbook, and
+         declining it is a caller told to go away over a word.
+      3. Everything else, only so the turn can be POSITIVELY identified as
+         something this desk does not do. conversation.py answers those with
+         the scope line; nothing here ever loads their playbook.
     """
-    for intent, pattern in _COMPILED_PATTERNS:
-        if pattern.search(text):
-            return intent
+    emergency_pattern = next(
+        pattern for intent, pattern in _COMPILED_PATTERNS if intent == EMERGENCY_INTENT
+    )
+    if emergency_pattern.search(text):
+        return EMERGENCY_INTENT
+    for supported_only in (True, False):
+        for intent, pattern in _COMPILED_PATTERNS:
+            if intent == EMERGENCY_INTENT:
+                continue
+            if (intent in SUPPORTED_INTENTS) is not supported_only:
+                continue
+            if pattern.search(text):
+                return intent
     return None
 
 
@@ -290,6 +425,11 @@ def _format_exemplars(exchanges: list[list[str]]) -> str:
         if role == "note":
             lines.append(f"[{text}]")
             continue
+        # Agent examples teach spoken output, so normalize only those. Caller
+        # lines are evidence and must stay verbatim even when the caller says
+        # the Tamil honorific themselves.
+        if role != "caller":
+            text = text.replace("சார்", "Sir")
         speaker = "CALLER" if role == "caller" else "YOU"
         lines.append(f"{speaker}: {text}")
     return "\n".join(lines)
@@ -314,7 +454,18 @@ class PromptBuilder:
 
     def load(self) -> None:
         self._core = self.core_path.read_text(encoding="utf-8")
-        self._playbooks = parse_flow_playbooks(self.master_prompt_path.read_text(encoding="utf-8"))
+        # main_prompt.txt still specifies all twenty flows and stays the spec.
+        # Only the five this desk serves are ever loadable as a playbook - so a
+        # bug that routes a billing turn past the scope check cannot answer it
+        # out of the billing playbook, it falls back to info.general like any
+        # other unknown intent.
+        self._playbooks = {
+            intent: playbook
+            for intent, playbook in parse_flow_playbooks(
+                self.master_prompt_path.read_text(encoding="utf-8")
+            ).items()
+            if intent in SUPPORTED_INTENTS
+        }
 
         # is_file(), not exists(): once the register is fine-tuned in, exemplars
         # are switched off with a blank CONVERSATION_EXEMPLARS_PATH, and a blank
@@ -324,7 +475,7 @@ class PromptBuilder:
             self._exemplars = {
                 intent: _format_exemplars(exchanges)
                 for intent, exchanges in raw.items()
-                if not intent.startswith("_")
+                if not intent.startswith("_") and intent in SUPPORTED_INTENTS
             }
             missing = set(self._playbooks) - set(self._exemplars)
             if missing:
@@ -349,11 +500,17 @@ class PromptBuilder:
         if playbook is None:
             return self._core
 
+        # The override REPLACES the spec's body where one exists; the spec's
+        # own body is used where it does not. See _RUNTIME_PLAYBOOK_OVERRIDES
+        # for why sending both was worse than sending either.
+        body = _RUNTIME_PLAYBOOK_OVERRIDES.get(resolved, playbook.body)
         parts = [
             self._core,
             "## THIS CALL'S PLAYBOOK — the flow you are handling right now",
             "Wording shown is a MODEL, not a script. Say it in your own words, one point per turn.",
-            playbook.body,
+            # Playbook examples describe agent wording. Keep the male address
+            # in Latin script so Tamil TTS says English "Sir", not "saar".
+            body.replace("சார்", "Sir"),
         ]
 
         exemplars = self._exemplars.get(resolved)

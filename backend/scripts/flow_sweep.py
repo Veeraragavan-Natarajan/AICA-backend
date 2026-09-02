@@ -1,13 +1,12 @@
-"""One realistic opener + one follow-up for EVERY flow, through the real
-ConversationManager and the real Ollama. clean_call.py exercises three flows
-in depth; register_eval/safety_eval exercise seven and three respectively.
-Between them roughly half the twenty flows have never been run through the
-live model and read by a human. This closes that gap.
+"""One realistic opener + one follow-up for each of the five served flows,
+through the real ConversationManager and the real Ollama.
 
-Openers are the phrases test_prompt_builder.py already asserts route to each
-flow (or the same trigger pattern for the six not covered there), so a bad
-transcript here is a MODEL quality question, not a router question - the
-router is proven elsewhere.
+The routing is proven without a model in backend/test_mvp_scope.py, so a bad
+transcript HERE is a model quality question, not a router question. Two extra
+rows are not flows at all and are the two things the five-flow MVP has to get
+right beyond the happy path: a department that appears in no exemplar, and an
+out-of-scope turn that must cost no LLM call and must not derail the call it
+interrupts.
 
     LLM_TEMPERATURE=0 python -m backend.scripts.flow_sweep
 """
@@ -34,81 +33,34 @@ FLOWS: dict[str, list[str]] = {
         "என் அம்மாவுக்கு திடீர்னு நெஞ்சு வலி, மூச்சு வாங்குது!",
         "Velachery, 4th Cross Street, number 9.",
     ],
-    "complaint.escalation_angry": [
-        "இது மூணாவது தடவை call பண்றது, என் பணம் இன்னும் வரல்.",
-        "பேரு சொல்றேன், Suresh. Refund reference என்ன?",
+    "appointment.book": [
+        "எனக்கு ஒரு appointment book பண்ணனும்.",
+        "Orthopaedics department, பேரு முருகேசன்.",
     ],
-    "complaint.register": [
-        "ரெண்டு மணி நேரம் காக்க வெச்சீங்க, staff மோசமா பேசுனாங்க.",
-        "நேத்து morning OP-ல நடந்தது.",
-    ],
-    "postprocedure.checkin": [
-        "நேத்து knee surgery ஆகி வீட்ல இருக்கேன், கொஞ்சம் doubt இருக்கு.",
-        "Dressing-ல கொஞ்சம் ஈரமா இருக்கு போல.",
-    ],
-    "clinical.triage": [
-        "மூணு நாளா காய்ச்சல் விடமாட்டேங்குது, உடம்பெல்லாம் வலி.",
-        "வயசு 34, என் சொந்த பிரச்சனை தான்.",
-    ],
-    "prescription.refill": [
-        "என் அப்பாவுக்கு tablets தீர்ந்துடுச்சு, refill வேணும்.",
-        "MRN ARV-094512, மருந்து பேரு Telmisartan 40.",
-    ],
-    "medication.query": [
-        "மருந்து சாப்பிட்ட பிறகு தூக்கம் வர்றது normal-ஆ?",
-        "Metformin தான் சாப்பிடுறேன், காலைல ஒரு tablet.",
-    ],
-    "lab.result_inquiry": [
-        "நேத்து blood test பண்ணேன், report வந்துடுச்சா?",
-        "Order number இல்ல, mobile 90045 33218.",
-    ],
-    "lab.book": [
-        "Doctor ஒரு blood test எழுதி கொடுத்திருக்காரு, book பண்ணணும்.",
-        "நாளைக்கு காலைல fasting-ல வரலாமா?",
-    ],
-    "insurance.query": [
-        "Gall bladder surgery insurance-ல cover ஆகுமா?",
-        "Policy number POL-4521, TPA Star Health.",
-    ],
-    "billing.query": [
-        "பில்-ல ஒரு charge தப்பா இருக்கு.",
-        "Bill number ARV-4471, consultation fee ரெண்டு தடவை போட்டிருக்காங்க.",
-    ],
-    "records.request": [
-        "என் அப்பாவோட discharge summary copy வேணும்.",
-        "MRN தெரியல, பேரு Muthu, கடைசி admit ஆனது கடந்த மாசம்.",
-    ],
-    "referral.status": [
-        "வேற hospital-க்கு referral letter கேட்டிருந்தேன், status என்ன?",
-        "கடந்த வாரம் cardiology-ல கேட்டேன்.",
-    ],
-    "patient.register": [
-        "நான் புதுசா register பண்ணணும், முதல் தடவை வர்றேன்.",
-        "பேரு Kalaivani, வயசு 41, மொபைல் 98765 43210.",
-    ],
-    "appointment.followup": [
-        "கடந்த மாசம் surgery ஆனது, follow-up review வர சொன்னாங்க.",
-        "MRN ARV-604417, course முடிஞ்சு ரெண்டு வாரமாச்சு.",
-    ],
+    # Not the trigger phrase: "மாத்தி தர முடியுமா" is how a caller actually
+    # asks, and it is the wording the widened trigger was added for.
     "appointment.reschedule": [
-        "நாளைக்கு appointment இருக்கு, வேற date-க்கு மாத்தணும்.",
+        "நாளைக்கு appointment இருக்கு, கொஞ்சம் மாத்தி தர முடியுமா?",
         "அடுத்த வெள்ளிக்கிழமை மாலை convenient.",
     ],
     "appointment.cancel": [
         "இந்த வெள்ளிக்கிழமை appointment இருக்கு, cancel பண்ணணும்.",
         "பேரு Ravi, MRN தேவையா?",
     ],
-    "appointment.confirm": [
-        "நாளைக்கு appointment confirm ஆயிடுச்சான்னு check பண்ணணும்.",
-        "பேரு Lakshmi, மொபைல் 99887 66554.",
-    ],
-    "appointment.book": [
-        "எனக்கு ஒரு appointment book பண்ணனும்.",
-        "Orthopaedics department, பேரு முருகேசன்.",
-    ],
     "info.general": [
         "Visiting hours என்ன, parking இருக்கா?",
         "Wheelchair வேணும், attender ஒருத்தர் கூட வரலாமா?",
+    ],
+    # A department the exemplars never mention, opened without the word
+    # "appointment" - the two things a five-flow MVP has to get right.
+    "appointment.book (unseen department)": [
+        "என் பையனை குழந்தை doctor-கிட்ட காட்டணும்.",
+        "வயசு 6, நாளைக்கு காலைல வர முடியும்.",
+    ],
+    # Must cost no LLM call at all and must not derail the booking behind it.
+    "out of scope (bill, then back to booking)": [
+        "என் bill-ல ஒரு charge தப்பா இருக்கு.",
+        "சரி, அப்போ Dermatology-ல ஒரு appointment வேணும்.",
     ],
 }
 

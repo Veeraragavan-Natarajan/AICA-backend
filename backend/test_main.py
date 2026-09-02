@@ -185,6 +185,9 @@ def _scripted_vad(flags: list[int]):
 
 def _make_conversation() -> ConversationManager:
     manager = ConversationManager(ConversationSettings())
+    # These integration tests inject scripted model turns to exercise the
+    # websocket/echo path below the production five-flow controller.
+    manager._deterministic_flows = False
     # Stub the builder rather than reading the real prompt files: these tests
     # assert websocket/session plumbing, not prompt content.
     manager.prompts._core = PROMPT_TEMPLATE
@@ -624,7 +627,7 @@ def test_the_agent_hearing_itself_does_not_become_a_caller_turn() -> None:
 
 def test_a_real_caller_turn_is_still_heard_while_the_agent_is_speaking() -> None:
     """The echo guard must not deafen the agent to an actual caller."""
-    asr = _FakeAsr(transcript="எனக்கு Cardiology-ல appointment book பண்ணணும்")
+    asr = _FakeAsr(transcript="எனக்கு Cardiology-ல ஒரு appointment வேணும்")
     llm = _ScriptedLlm([LlmReply(content="கண்டிப்பா சார்.")])
     _set_app_state(asr=asr, llm=llm)
     client = TestClient(app)

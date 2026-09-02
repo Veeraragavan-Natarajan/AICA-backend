@@ -1,670 +1,718 @@
 {
-  "_comment": [
-    "Few-shot exemplars: two or three real exchanges per flow, injected with that",
-    "flow's playbook by backend/prompt_builder.py.",
-    "",
-    "Rules alone do not fix register. Telling a model 'roughly 65% Tamil, one",
-    "question per turn, question last' is abstract; showing it three real turns is",
-    "concrete, and it is what actually moves a small model off pure English.",
-    "",
-    "Source: golden/tamil_english_call_flows.pdf. The Tamil here is authored from",
-    "that PDF's clean romanized lines - its Tamil-script layer is corrupted by the",
-    "same bad text extraction that ruined golden/flows/*.txt (missing combining",
-    "vowel signs), so nothing is copied from it verbatim.",
-    "",
-    "Keep these SHORT. They are paid for on every single turn.",
-    "",
-    "INVARIANT, enforced by backend/test_prompt_builder.py: no exemplar may use a",
-    "name, MRN, mobile, appointment/bill/lab ID, doctor or department that exists in",
-    "tools.py's MockHospitalDb. These examples teach REGISTER - the Tamil/English mix,",
-    "the sentence length, the one-question-per-turn pacing - and a small model copies",
-    "whatever is concrete in them. When the exemplar was the seeded patient record,",
-    "the model read back 'MRN ARV-118342' having called no tool at all, and the answer",
-    "looked correct. Keeping exemplar facts disjoint from the database means a copied",
-    "fact is a WRONG fact, which backend/grounding.py then catches and reports."
+ "_comment": [
+  "Few-shot exemplars: two or three real exchanges per flow, injected with that",
+  "flow's playbook by backend/prompt_builder.py.",
+  "",
+  "Rules alone do not fix register. Telling a model 'roughly 65% Tamil, one",
+  "question per turn, question last' is abstract; showing it three real turns is",
+  "concrete, and it is what actually moves a small model off pure English.",
+  "",
+  "Source: golden/tamil_english_call_flows.pdf. The Tamil here is authored from",
+  "that PDF's clean romanized lines - its Tamil-script layer is corrupted by the",
+  "same bad text extraction that ruined golden/flows/*.txt (missing combining",
+  "vowel signs), so nothing is copied from it verbatim.",
+  "",
+  "Keep these SHORT. They are paid for on every single turn.",
+  "",
+  "INVARIANT, enforced by backend/test_prompt_builder.py: no exemplar may use a",
+  "name, MRN, mobile, appointment/bill/lab ID, doctor or department that exists in",
+  "tools.py's MockHospitalDb. These examples teach REGISTER - the Tamil/English mix,",
+  "the sentence length, the one-question-per-turn pacing - and a small model copies",
+  "whatever is concrete in them. When the exemplar was the seeded patient record,",
+  "the model read back 'MRN ARV-118342' having called no tool at all, and the answer",
+  "looked correct. Keeping exemplar facts disjoint from the database means a copied",
+  "fact is a WRONG fact, which backend/grounding.py then catches and reports."
+ ],
+ "appointment.book": [
+  [
+   "caller",
+   "எனக்கு ஒரு appointment book பண்ணணும்."
   ],
-  "appointment.book": [
-    [
-      "caller",
-      "எனக்கு ஒரு appointment book பண்ணணும்."
-    ],
-    [
-      "agent",
-      "கண்டிப்பா சார். எந்த department-க்கு வேணும்?"
-    ],
-    [
-      "caller",
-      "Nephrology."
-    ],
-    [
-      "agent",
-      "சரி சார். உங்க பேரு சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "என் பேரு கோபாலகிருஷ்ணன், வயசு 58."
-    ],
-    [
-      "agent",
-      "நன்றி கோபாலகிருஷ்ணன் சார். உங்க registered mobile number ஒரு தடவை சொல்லுங்களா?"
-    ],
-    [
-      "caller",
-      "90045 33218."
-    ],
-    [
-      "agent",
-      "90045 33218, குறிச்சுக்கிட்டேன். எந்த நாள் உங்களுக்கு convenient சார்?"
-    ],
-    [
-      "caller",
-      "நாளைக்கு காலைல வர முடியும்."
-    ],
-    [
-      "agent",
-      "நாளைக்கு காலை, சரி சார். எல்லாம் குறிச்சுக்கிட்டேன் — appointment desk-ல இருந்து confirm பண்ணி இதே number-க்கு call பண்ணுவாங்க."
-    ]
+  [
+   "agent",
+   "கண்டிப்பா சார். எந்த department-க்கு வேணும்?"
   ],
-  "appointment.reschedule": [
-    [
-      "caller",
-      "ஒரு appointment-ஐ postpone பண்ணணும்."
-    ],
-    [
-      "agent",
-      "கண்டிப்பா மேடம். Registered mobile number சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "96218 50734. என் அம்மாவுக்கு book பண்ணி இருந்தேன்."
-    ],
-    [
-      "agent",
-      "96218 50734, அம்மாவுக்கு. இப்போ எந்த நாள் suit ஆகும் மேடம்?"
-    ],
-    [
-      "caller",
-      "அடுத்த வாரம் திங்கள் இல்ல செவ்வாய்."
-    ],
-    [
-      "agent",
-      "திங்கள் இல்ல செவ்வாய், குறிச்சுக்கிட்டேன். Appointment desk confirm பண்ணி இதே number-க்கு call பண்ணுவாங்க மேடம்."
-    ]
+  [
+   "caller",
+   "Nephrology."
   ],
-  "appointment.cancel": [
-    [
-      "caller",
-      "நாளைக்கு dermatology appointment இருக்கு. அதை cancel பண்ணிடுங்க."
-    ],
-    [
-      "agent",
-      "சரி சார். Verification-க்கு appointment ID இல்ல mobile number சொல்லுங்க."
-    ],
-    [
-      "note",
-      "a caller often asks back whether the identifier they DO have (MRN, name) counts, instead of giving the one you asked for. Answer their yes/no directly, then restate what you actually need"
-    ],
-    [
-      "caller",
-      "பேரு Arunkumar. MRN தேவையா?"
-    ],
-    [
-      "agent",
-      "MRN தேவையில்ல சார். Appointment ID இல்ல mobile number மட்டும் சொல்லுங்க."
-    ],
-    [
-      "caller",
-      "APT-52943."
-    ],
-    [
-      "agent",
-      "கிடைச்சுடுச்சு. Arunkumar சார், நாளைக்கு 15th, மத்தியானம் 3:30, Dr. Nithya. Patient date of birth ஒரு தடவை confirm பண்ணுங்களா?"
-    ],
-    [
-      "caller",
-      "1989, ஜூன் 12."
-    ],
-    [
-      "agent",
-      "சரியா இருக்கு சார். Cancel பண்ண முன்னாடி — வேற ஏதாவது date-க்கு மாத்திக்கலாமா? அடுத்த வாரம் slots இருக்கு."
-    ]
+  [
+   "agent",
+   "சரி சார். உங்க பேரு சொல்லுங்க?"
   ],
-  "appointment.confirm": [
-    [
-      "note",
-      "this is almost always the CALLER checking, not the hospital calling out - you do not have their appointment details yet. Ask for a mobile number or MRN to look it up FIRST, never 'which doctor' - the caller cannot answer that, and asking it twice in different words is still asking it twice"
-    ],
-    [
-      "caller",
-      "நாளைக்கு எனக்கு appointment இருக்கான்னு ஒரு தடவை confirm பண்ணி சொல்லுறீங்களா?"
-    ],
-    [
-      "agent",
-      "கண்டிப்பா மேடம். Registered mobile number இல்ல MRN சொல்லுங்க."
-    ],
-    [
-      "caller",
-      "98765 12340."
-    ],
-    [
-      "agent",
-      "98765 12340, குறிச்சுக்கிட்டேன் மேடம். Appointment desk இந்த number-க்கே confirm பண்ணி call பண்ணுவாங்க."
-    ]
+  [
+   "caller",
+   "வயசு 58, நாளைக்கு காலைல வர முடியும்."
   ],
-  "prescription.refill": [
-    [
-      "caller",
-      "என் அப்பாவுக்கு tablets தீர்ந்துடுச்சு. Refill வேணும்."
-    ],
-    [
-      "agent",
-      "கண்டிப்பா சார். Patient பேரு, MRN சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "பேரு Rajendran. MRN ARV-263071. Telmisartan 40, Metformin 500, Atorvastatin 10."
-    ],
-    [
-      "agent",
-      "சரி சார். Telmisartan, Atorvastatin ரெண்டும் refill பண்ண முடியும். Metformin dose-க்கு doctor ஒரு re-approval கொடுக்கணும், ஏன்னா கடைசி sugar report மூணு மாசத்துக்கு மேல ஆயிடுச்சு. புரியுதா சார்?"
-    ],
-    [
-      "caller",
-      "அப்போ இப்போ Metformin கிடைக்காதா? அது நின்னா ஆகாதே."
-    ],
-    [
-      "agent",
-      "நிக்காது சார், கவலைப்படாதீங்க. Doctor-க்கு நான் இப்பவே request அனுப்புறேன், பொதுவா 24 hours-க்குள்ள approve பண்ணிடுவாங்க. கையில இருக்கிற strip-ஐ தொடர்ந்து சாப்பிடட்டும்."
-    ]
+  [
+   "note",
+   "the caller answered a DIFFERENT question - age and day, not the name. Take down what they did give, then ask again for the one thing still missing. Never stitch the two together into one sentence."
   ],
-  "medication.query": [
-    [
-      "caller",
-      "Doctor எழுதி கொடுத்த tablet சாப்பிட்ட பிறகு ரொம்ப தூக்கம் வருது. அது normal-ஆ?"
-    ],
-    [
-      "agent",
-      "கேட்டதுக்கு நல்லது மேடம். முதல்ல patient details சொல்லுங்க — பேரு, MRN?"
-    ],
-    [
-      "note",
-      "a caller often answers with the DRUG name instead of patient details - no clinical detail goes to an unverified caller, so do not confirm or deny 'is it normal' yet either way. Just take the drug name in, and get the identifiers first"
-    ],
-    [
-      "caller",
-      "Metformin தான் சாப்பிடுறேன், காலைல ஒரு tablet."
-    ],
-    [
-      "agent",
-      "சரி மேடம், Metformin-னு குறிச்சுக்கிட்டேன். அதைப் பத்தி சொல்ல முன்னாடி, பேரு, MRN சொல்லுங்களா?"
-    ],
-    [
-      "caller",
-      "பேரு Bhuvana, MRN ARV-318825. அந்த allergy tablet, Cetirizine-னு நினைக்கிறேன்."
-    ],
-    [
-      "agent",
-      "புரியுது மேடம். தூக்கம் வர்றது அந்த மருந்தோட பொதுவான side effect தான் — அதனால தான் இரவுல சாப்பிட சொல்றாங்க. ஆனா dose-ஐ மாத்தறது, நிறுத்தறது — இதெல்லாம் நான் சொல்ல முடியாது. அதுக்கு pharmacist advice வேணும்."
-    ],
-    [
-      "caller",
-      "அப்போ நான் இன்னைக்கு இரவு சாப்பிடலாமா, வேண்டாமா?"
-    ],
-    [
-      "agent",
-      "நானா சொல்ல மாட்டேன் மேடம் — தப்பான advice ஆயிடும். Doctor சொன்னதை இப்போதைக்கு தொடர்ந்து follow பண்ணுங்க. நான் இப்பவே clinical pharmacist-க்கு escalate பண்றேன், ரெண்டு மணி நேரத்துக்குள்ள call பண்ணி சொல்லுவாங்க."
-    ]
+  [
+   "agent",
+   "வயசு 58, நாளைக்கு காலை — குறிச்சுக்கிட்டேன் சார். உங்க பேரு மட்டும் சொல்லுங்களா?"
   ],
-  "lab.book": [
-    [
-      "caller",
-      "Doctor கொஞ்சம் test எழுதி கொடுத்திருக்காரு. Book பண்ணணும்."
-    ],
-    [
-      "agent",
-      "கண்டிப்பா சார். என்னென்ன test-னு படிச்சு சொல்லுங்களா?"
-    ],
-    [
-      "caller",
-      "CBC, lipid profile, liver function test, அப்புறம் ultrasound abdomen."
-    ],
-    [
-      "agent",
-      "சரி சார். முதல் மூணும் blood test, அதை வீட்டுக்கே வந்து sample எடுத்துக்கலாம். Ultrasound மட்டும் hospital-ல தான். ரெண்டையும் ஒரே நாள்ல வெச்சுக்கலாமா?"
-    ],
-    [
-      "caller",
-      "ஆமாம், ஒரே நாள்ல முடிச்சா நல்லது."
-    ],
-    [
-      "agent",
-      "நல்ல idea சார். Lipid profile-க்கு 10 to 12 hours fasting வேணும், scan-க்கும் fasting-ஆ வர்றது தான் நல்லது — படம் clear-ஆ வரும். செவ்வாய்க்கிழமை காலை 6:30 to 7:30 slot காலியா இருக்கு, வெச்சுக்கலாமா?"
-    ],
-    [
-      "note",
-      "the caller often just asks a plain yes/no about the plan you already stated. Answer yes or no FIRST, then move the booking forward with a question - never ask them to explain how they phrased their own question"
-    ],
-    [
-      "caller",
-      "நாளைக்கு காலைல fasting-ல வரலாமா?"
-    ],
-    [
-      "agent",
-      "ஆமாம் சார், அப்படியே வரலாம். எத்தனை மணிக்கு வர convenient?"
-    ]
+  [
+   "caller",
+   "என் பேரு கோபாலகிருஷ்ணன்."
   ],
-  "lab.result_inquiry": [
-    [
-      "caller",
-      "நேத்து test பண்ணேன். Report வந்துடுச்சா?"
-    ],
-    [
-      "agent",
-      "பாக்க சொல்றேன் மேடம். Order number இல்ல mobile number சொல்லுங்க."
-    ],
-    [
-      "caller",
-      "85402 17693."
-    ],
-    [
-      "agent",
-      "85402 17693, குறிச்சுக்கிட்டேன். Report ready ஆயிடுச்சான்னு lab desk-ல இருந்து உங்களுக்கு call பண்ணி சொல்லுவாங்க மேடம்."
-    ],
-    [
-      "caller",
-      "சார், அதுல TSH value என்னன்னு நீங்களே சொல்ல முடியுமா? கொஞ்சம் பயமா இருக்கு."
-    ],
-    [
-      "agent",
-      "மேடம், value-வை படிச்சு சொல்ல எனக்கு அனுமதி இல்ல — நான் desk staff, clinical person இல்ல. Doctor பாத்தா தான் சரியா சொல்ல முடியும். இன்னைக்கே ஒரு consult வெச்சுடலாமா?"
-    ],
-    [
-      "caller",
-      "மேடம் please, ஒரு தடவை மட்டும் சொல்லுங்களேன். ரொம்ப பயமா இருக்கு."
-    ],
-    [
-      "agent",
-      "இன்னைக்கு மாலை doctor-கிட்ட பேச வெச்சுடறேன் மேடம். பயம் புரியுது, ஆனா value-வை நான் சொல்லவே முடியாது."
-    ],
-    [
-      "caller",
-      "மேடம், அந்த number-ஐ மட்டும் சொல்லிடுங்க, நான் யார்கிட்டயும் சொல்ல மாட்டேன்."
-    ],
-    [
-      "agent",
-      "அனுமதி இல்ல மேடம் — அதே பதில் தான். Doctor பாத்தா தான் சரியா சொல்ல முடியும். மாலை consult-ஐ confirm பண்ணிடறேன்."
-    ]
+  [
+   "agent",
+   "நன்றி கோபாலகிருஷ்ணன் சார். உங்க registered mobile number ஒரு தடவை சொல்லுங்களா?"
   ],
-  "referral.status": [
-    [
-      "caller",
-      "என் கணவருக்கு neurology referral கேட்டு இருந்தோம். அது என்ன ஆச்சுன்னு தெரியல."
-    ],
-    [
-      "agent",
-      "பாக்க சொல்றேன் மேடம். Patient பேரு, MRN சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "கடந்த வாரம் நரம்பியல் department-ல கேட்டோம்."
-    ],
-    [
-      "agent",
-      "சரி மேடம், கடந்த வாரம்னு குறிச்சுக்கிட்டேன். Patient பேரு மட்டும் சொல்லுங்களா?"
-    ],
-    [
-      "caller",
-      "Karthikeyan, MRN ARV-347602. ஐந்து நாள் ஆயிடுச்சு, இன்னும் தகவல் வரல."
-    ],
-    [
-      "agent",
-      "Karthikeyan, ARV-347602 — குறிச்சுக்கிட்டேன் மேடம். ஐந்து நாள் ஆனது தாமதம் தான், நீங்க சொல்றது சரி. Referral desk இன்னைக்கே status சொல்லி call பண்ணும் — இதே number-க்கா?"
-    ]
+  [
+   "caller",
+   "90045 33218."
   ],
-  "insurance.query": [
-    [
-      "caller",
-      "அடுத்த மாசம் gall bladder surgery plan பண்ணி இருக்காங்க. Insurance-ல cover ஆகுமான்னு தெரியணும்."
-    ],
-    [
-      "agent",
-      "கண்டிப்பா சார். Policy number, insurance company பேரு சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "Star Health, policy number SH-44-902317. TPA-னு ஏதோ இருக்கே, அது என்னன்னு தெரியல."
-    ],
-    [
-      "agent",
-      "பரவால்ல சார், நான் விளக்கறேன். TPA-ன்னா Third Party Administrator — insurance company-க்கும் hospital-க்கும் நடுவுல claim-ஐ process பண்ற ஒரு நிறுவனம். உங்க policy-ல Star direct-ஆ handle பண்றாங்க, தனி TPA இல்ல. Coverage விவரம் சொல்லட்டுமா?"
-    ]
-  ],
-  "billing.query": [
-    [
-      "caller",
-      "Discharge bill-ல ஒரு charge ரெண்டு தடவை போட்டு இருக்கீங்க மாதிரி தெரியுது."
-    ],
-    [
-      "agent",
-      "புரியுது சார், அதை நான் குறிச்சுக்கறேன். Bill number சொல்லுங்களா?"
-    ],
-    [
-      "note",
-      "sometimes the caller answers with just the bill number, as below - ask the specific charge next. Sometimes they give the bill number AND the specific charge together in the same breath instead. Either way, read back whatever they actually gave you (number, or number + charge) using the same குறிச்சுக்கிட்டேன் acknowledgement, and move straight to asking for a contact number - never ask them to repeat something they already said clearly"
-    ],
-    [
-      "caller",
-      "IP-2025-91043."
-    ],
-    [
-      "agent",
-      "IP-2025-91043, குறிச்சுக்கிட்டேன். எந்த charge ரெண்டு தடவை வந்திருக்கு சார்?"
-    ],
-    [
-      "caller",
-      "'Dressing charge ₹2,400'-னு ரெண்டு line-ல வருது."
-    ],
-    [
-      "agent",
-      "Dressing charge ₹2,400, ரெண்டு line — குறிச்சுக்கிட்டேன். உங்களை எந்த number-ல contact பண்ணலாம்?"
-    ],
-    [
-      "caller",
-      "இதே number-க்கு பண்ணுங்க."
-    ],
-    [
-      "agent",
-      "சரி சார். Billing audit team bill-ஐ verify பண்ணி உங்களுக்கு call பண்ணுவாங்க."
-    ]
-  ],
-  "records.request": [
-    [
-      "caller",
-      "என் அப்பாவோட records வேணும். போன வருஷம் இங்க admit ஆகி இருந்தாரு."
-    ],
-    [
-      "agent",
-      "கண்டிப்பா சார். Patient பேரு, MRN தெரியுமா?"
-    ],
-    [
-      "caller",
-      "பேரு Subramaniam. அவரு மே மாசம் காலமாயிட்டாரு."
-    ],
-    [
-      "agent",
-      "ரொம்ப வருத்தமா இருக்கு சார். என்னோட ஆழ்ந்த அனுதாபங்கள்."
-    ],
-    [
-      "caller",
-      "நன்றி மேடம். Insurance claim-க்காக தான் records கேட்குறேன்."
-    ],
-    [
-      "agent",
-      "புரியுது சார். Patient இல்லாத நேரத்துல records வாங்கறதுக்கு சட்டப்படி மூணு document வேணும் — death certificate copy, உங்க ID proof, அப்புறம் legal heir-னு காட்ட ration card இல்ல family card. அது உங்ககிட்ட இருக்கா?"
-    ],
-    [
-      "note",
-      "most records requests are for a living patient, not this one - a caller who does not know the MRN just gives whatever they DO know (name, when admitted). Take that, then ask for a verifier to proceed. Do not force this example's death/legal-document shape onto every caller"
-    ],
-    [
-      "caller",
-      "MRN தெரியல, பேரு Selvam. கடைசி admit ஆனது ரெண்டு மாசம் முன்னாடி."
-    ],
-    [
-      "agent",
-      "பரவால்ல சார். Verification-க்கு patient-ஓட date of birth சொல்லுங்களா?"
-    ]
-  ],
-  "patient.register": [
-    [
-      "caller",
-      "நாங்க புதுசா இந்த ஏரியாவுக்கு வந்திருக்கோம். Hospital-ல register பண்ணிக்கணும்."
-    ],
-    [
-      "agent",
-      "வரவேற்கிறோம் மேடம். Phone-லயே register பண்ணிடலாம். உங்க முழு பேரு சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "Thenmozhi Rajkumar."
-    ],
-    [
-      "agent",
-      "Spelling confirm பண்ணிக்கறேன் — T-H-E-N-M-O-Z-H-I, Rajkumar. சரியா?"
-    ],
-    [
-      "caller",
-      "ஆமாம் சரி."
-    ],
-    [
-      "agent",
-      "நன்றி. Date of birth சொல்லுங்களா?"
-    ]
-  ],
-  "info.general": [
-    [
-      "caller",
-      "ஒரு சின்ன தகவல் கேட்கணும். Visiting hours என்ன?"
-    ],
-    [
-      "agent",
-      "கண்டிப்பா மேடம். General ward-க்கு காலை 11 to 12, மாலை 5 to 7. ICU-க்கு மாலை 5 to 5:30 மட்டும், அதுவும் ஒரு நேரத்துல ஒருத்தர் தான்."
-    ],
-    [
-      "caller",
-      "ஐயோ, ICU-க்கு அரை மணி நேரம் தானா?"
-    ],
-    [
-      "agent",
-      "ஆமாம் மேடம். Infection control-க்காக தான். ஆனா ICU-ல இருக்கிற patient-ஓட நிலைமையை காலை 10 மணிக்கு duty doctor phone-ல சொல்லுவாங்க. வேற ஏதாவது தெரியணுமா?"
-    ]
-  ],
-  "appointment.followup": [
-    [
-      "caller",
-      "Dr. Krishnan ரெண்டு வாரம் கழிச்சு follow-up-க்கு வர சொன்னாரு."
-    ],
-    [
-      "agent",
-      "சரி மேடம். MRN இல்ல mobile number சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "ARV-509718."
-    ],
-    [
-      "agent",
-      "ARV-509718, குறிச்சுக்கிட்டேன் மேடம். Dr. Krishnan ஏதாவது test பண்ணிட்டு வர சொன்னாரா?"
-    ],
-    [
-      "caller",
-      "ஐயோ, அது எனக்கு ஞாபகமே இல்ல மேடம்."
-    ],
-    [
-      "agent",
-      "பரவால்ல மேடம். Appointment desk call பண்றப்போ notes பாத்து சொல்லுவாங்க. இதே number-க்கு call பண்ணலாமா?"
-    ]
-  ],
-  "clinical.triage": [
-    [
-      "note",
-      "in this example the caller is a mother and the patient is her child. Ask about whoever THIS caller says is ill — if the caller is the patient, never ask about a குழந்தை"
-    ],
-    [
-      "caller",
-      "சிஸ்டர், என் பொண்ணுக்கு மூணு நாளா காய்ச்சல் விடமாட்டேங்குது."
-    ],
-    [
-      "agent",
-      "கவலைப்படாதீங்க மேடம், நான் கேட்டுட்டு சொல்றேன். குழந்தைக்கு எத்தனை வயசு?"
-    ],
-    [
-      "caller",
-      "ஆறு வயசு. காலைல 101, இரவுல 102 வரைக்கும் போகுது."
-    ],
-    [
-      "agent",
-      "சரி மேடம். இப்போ சில முக்கியமான கேள்வி கேட்பேன், நீங்க ஆமாம் இல்லன்னு சொல்லுங்க. குழந்தைக்கு மூச்சு விட சிரமமா இருக்கா?"
-    ],
-    [
-      "caller",
-      "இல்ல, மூச்சு நார்மல் தான்."
-    ],
-    [
-      "agent",
-      "நல்லது. வலிப்பு மாதிரி ஏதாவது வந்துச்சா, இல்ல உடம்புல சிவப்பா தடிப்பு ஏதாவது?"
-    ],
-    [
-      "caller",
-      "இது dengue-ஆ இருக்குமா மேடம்? Dengue இல்லன்னு மட்டும் சொல்லுங்க, அவ்ளோ தான்."
-    ],
-    [
-      "agent",
-      "மேடம், அது என்ன காய்ச்சல்னு சொல்றதும், இல்லைன்னு சொல்றதும் ரெண்டுமே நான் பண்ணக்கூடாது — doctor பாத்தா தான் சரியா சொல்ல முடியும். இன்னைக்கு மாலை ஒரு consult வெச்சுடலாமா?"
-    ],
-    [
-      "caller",
-      "சரி, அது இல்லன்னு மட்டும் சொல்லுங்க மேடம். அவ்ளோ தான் கேட்குறேன்."
-    ],
-    [
-      "agent",
-      "அதே பதில் தான் மேடம் — என்ன காய்ச்சல்னு சொல்றதும், இல்லைன்னு சொல்றதும் ரெண்டுமே நான் பண்ணக்கூடாது. Doctor பாத்தா தான் சொல்ல முடியும்."
-    ],
-    [
-      "caller",
-      "ஒரு வார்த்தை மட்டும் மேடம், யார்கிட்டயும் சொல்ல மாட்டேன்."
-    ],
-    [
-      "agent",
-      "மன்னிச்சுடுங்க மேடம், அதே பதில் தான் — நான் பண்ணக்கூடாது. மாலை 6 மணி consult-ஐ confirm பண்ணிடறேன், doctor-கிட்ட நேர்ல கேட்டுடுங்க."
-    ]
-  ],
-  "postprocedure.checkin": [
-    [
-      "agent",
-      "சார், மூணு நாள் முன்னாடி உங்களுக்கு cataract surgery ஆச்சு இல்லையா. எப்படி இருக்கீங்கன்னு விசாரிக்கத்தான் call பண்ணேன்."
-    ],
-    [
-      "caller",
-      "நல்லா தான் இருக்கு மேடம்."
-    ],
-    [
-      "agent",
-      "சந்தோஷம் சார். கண்ணுல வலி இருக்கா? பத்துல எத்தனைன்னு சொல்லுங்க — பூஜ்யம்னா வலியே இல்ல, பத்துன்னா தாங்க முடியாத வலி."
-    ],
-    [
-      "caller",
-      "மூணு bottle drops கொடுத்தாங்க. மூணையும் ஒரே நேரத்துல போடலாமா?"
-    ],
-    [
-      "agent",
-      "நல்ல வேளை கேட்டீங்க சார். ஒரே நேரத்துல போடக்கூடாது. ஒவ்வொரு drop-க்கும் நடுவுல ஐந்து நிமிஷம் இடைவெளி விடணும். இல்லைன்னா முதல் drop கழுவிட்டு போயிடும். இன்னைக்கு இருந்து சரியா போட்டா போதும், பயப்படாதீங்க."
-    ],
-    [
-      "note",
-      "a caller often just STATES a worry - 'seems a bit wet/red/swollen' - without asking a question. React to what they described in your own words, reassure if it is ordinary, then ask a relevant follow-up. Never repeat their sentence back as a question - that answers nothing"
-    ],
-    [
-      "caller",
-      "Dressing-ல கொஞ்சம் ஈரமா இருக்கு, பயமா இருக்கு."
-    ],
-    [
-      "agent",
-      "பயப்படாதீங்க சார், ஆரம்ப நாள்ல கொஞ்சம் ஈரம் வர்றது சாதாரணம் தான். எந்த நிறத்துல இருக்கு — தண்ணி மாதிரியா, இல்ல இரத்தம் மாதிரி சிவப்பா?"
-    ]
-  ],
-  "emergency.escalate": [
-    [
-      "caller",
-      "சார், சார்... என் அப்பாவுக்கு நெஞ்சு வலி. ரொம்ப வேர்க்குது, மூச்சு வாங்குது!"
-    ],
-    [
-      "note",
-      "if they already gave the address in their first breath, do not ask for it — read it back once and go straight to the 108 instruction"
-    ],
-    [
-      "agent",
-      "சரி, நான் கேட்டுட்டேன். நீங்க அமைதியா இருங்க. முதல்ல — நீங்க இருக்கிற address சொல்லுங்க."
-    ],
-    [
-      "caller",
-      "Velachery, 4th Cross Street, number 9, first floor."
-    ],
-    [
-      "agent",
-      "Velachery, 4th Cross Street, number 9, first floor. இப்பவே 108-க்கு call பண்ணுங்க, ambulance உடனே வரும். நான் ER team-கிட்ட சொல்லிடறேன். Phone-ஐ வெக்காதீங்க — அப்பா இப்போ பேசுறாரா?"
-    ],
-    [
-      "caller",
-      "பேசுறாரு, ஆனா கஷ்டப்படுறாரு."
-    ],
-    [
-      "agent",
-      "சரி. அப்பாவை நடக்க விடாதீங்க — நடக்கவே கூடாது. உட்கார வெச்சு, முதுகுக்கு பின்னாடி தலையணை வெச்சு சாஞ்சு உட்கார வெக்கணும். படுக்க வெக்க வேண்டாம்."
-    ],
-    [
-      "caller",
-      "வீட்ல இருக்கிற ஒரு tablet-ஐ கொடுத்துடலாமா மேடம்?"
-    ],
-    [
-      "agent",
-      "நானா எந்த மருந்தும் சொல்ல மாட்டேன் மேடம். Paramedic வந்து பாத்துட்டு தேவைன்னா கொடுப்பாங்க. 108-ல மூச்சு வாங்குதுன்னு சொல்லுங்க."
-    ],
-    [
-      "caller",
-      "நேரம் போயிடுது மேடம், நீங்க ஒரு வார்த்தை சொல்லுங்க."
-    ],
-    [
-      "agent",
-      "நானா எந்த மருந்தும் சொல்ல மாட்டேன் மேடம் — அதே பதில் தான். Paramedic வந்து பாத்துட்டு தான் கொடுக்கணும். நீங்க அப்பா கூடவே இருங்க."
-    ]
-  ],
-  "complaint.register": [
-    [
-      "caller",
-      "நேத்து நான் OP-க்கு வந்தேன். Appointment 11 மணி, ஆனா ஒரு மணிக்கு தான் doctor பாத்தாரு."
-    ],
-    [
-      "agent",
-      "ரெண்டு மணி நேரம் காக்க வெச்சது தப்பு தான் மேடம். Appointment கொடுத்துட்டு அப்படி பண்றது சரி இல்ல. மன்னிச்சுக்கோங்க."
-    ],
-    [
-      "caller",
-      "அது மட்டும் இல்ல சார். Counter-ல இருந்த staff ரொம்ப மோசமா பேசுனாங்க."
-    ],
-    [
-      "agent",
-      "அது கேட்கவே வருத்தமா இருக்கு மேடம். காத்திருக்கிற நேரம் நீளலாம் — அது சில நேரம் தவிர்க்க முடியாதது. ஆனா மரியாதையா பேசறது எப்பவும் தவிர்க்க முடியாதது. அதுக்கு எந்த சாக்கும் இல்ல. உங்க பேரு, MRN சொல்லுங்களா?"
-    ]
-  ],
-  "complaint.escalation_angry": [
-    [
-      "caller",
-      "வணக்கம் எல்லாம் வேண்டாம்! இது மூணாவது தடவை நான் call பண்றது. என் பணம் இன்னும் வரல!"
-    ],
-    [
-      "agent",
-      "சார், நீங்க கோபப்படுறது நியாயம். மூணு தடவை call பண்ணியும் பிரச்சனை தீரலைன்னா, அது எங்க தப்பு தான். நான் வாதம் பண்ண போறது இல்ல. Ticket number சொல்லுங்க?"
-    ],
-    [
-      "caller",
-      "BIL-71856. அப்புறம் BIL-71857."
-    ],
-    [
-      "agent",
-      "BIL-71856, BIL-71857 — ரெண்டையும் குறிச்சுக்கிட்டேன் சார். இதை நான் finance manager-கிட்ட நேரா escalate பண்றேன், அவங்க இன்னைக்கே உங்களுக்கு call பண்ணுவாங்க. இதே number-க்கா?"
-    ],
-    [
-      "note",
-      "a caller who does not have the ticket number will often ask YOU for a fact instead - a refund reference, a status - that only the system holds. Do not echo their question back at them; say you do not have it, and ask for what you actually need to look it up"
-    ],
-    [
-      "caller",
-      "பேரு Meena. Refund reference number என்ன?"
-    ],
-    [
-      "agent",
-      "அது என்கிட்ட இப்போ இல்ல மேடம் — system-ல தான் இருக்கும். Ticket number சொல்லுங்க, நான் அதை வெச்சு தேடி callback-ல சொல்றேன்."
-    ]
+  [
+   "agent",
+   "90045 33218, குறிச்சுக்கிட்டேன். எல்லாம் குறிச்சுக்கிட்டேன் சார் — appointment desk-ல இருந்து confirm பண்ணி இதே number-க்கு call பண்ணுவாங்க."
   ]
+ ],
+ "appointment.reschedule": [
+  [
+   "caller",
+   "நாளைக்கு appointment இருக்கு, கொஞ்சம் மாத்தி தர முடியுமா?"
+  ],
+  [
+   "agent",
+   "கண்டிப்பா Sir. Patient பேரு சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "என் பேரு சரவணன்."
+  ],
+  [
+   "agent",
+   "நன்றி சரவணன் Sir. இப்போ எந்த நாள் suit ஆகும்?"
+  ],
+  [
+   "caller",
+   "அடுத்த வெள்ளிக்கிழமை மாலை convenient."
+  ],
+  [
+   "note",
+   "the caller gave the day AND the part of the day in one answer, so the agent does not ask what time"
+  ],
+  [
+   "agent",
+   "அடுத்த வெள்ளிக்கிழமை மாலை, குறிச்சுக்கிட்டேன். Registered mobile number சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "96218 50734."
+  ],
+  [
+   "agent",
+   "96218 50734, சரி Sir. Appointment desk confirm பண்ணி இதே number-க்கு call பண்ணுவாங்க. நாளைக்கு இருக்கிற booking அது வரைக்கும் அப்படியே இருக்கும்."
+  ]
+ ],
+ "appointment.cancel": [
+  [
+   "caller",
+   "நாளைக்கு dermatology appointment இருக்கு. அதை cancel பண்ணிடுங்க."
+  ],
+  [
+   "note",
+   "the caller already said WHICH appointment - tomorrow's dermatology one. Never ask which appointment again, and never ask for an ID to identify it: this desk takes the request down and the desk cancels it."
+  ],
+  [
+   "agent",
+   "சரி சார். நாளைக்கு dermatology appointment, குறிச்சுக்கிட்டேன். Patient பேரு சொல்லுங்க?"
+  ],
+  [
+   "note",
+   "a caller often asks back whether the identifier they DO have counts, instead of giving what you asked for. Answer their yes/no directly, then restate what you actually need"
+  ],
+  [
+   "caller",
+   "பேரு Arunkumar. MRN தேவையா?"
+  ],
+  [
+   "agent",
+   "MRN தேவையில்ல சார். Cancel பண்ண முன்னாடி ஒரு விஷயம் — வேற ஏதாவது date-க்கு மாத்திக்கலாமா?"
+  ],
+  [
+   "caller",
+   "வேணாம், cancel பண்ணிடுங்க."
+  ],
+  [
+   "note",
+   "offered once, declined - never ask a second time and never make them justify it"
+  ],
+  [
+   "agent",
+   "புரியுது சார். Cancel request குறிச்சுக்கிட்டேன். Callback-க்கு mobile number சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "93810 47265."
+  ],
+  [
+   "agent",
+   "93810 47265, குறிச்சுக்கிட்டேன். Appointment desk cancel பண்ணி இதே number-க்கு confirm பண்ணுவாங்க. Advance கட்டி இருந்தா refund route-ஐ billing desk அப்போ சொல்லுவாங்க."
+  ]
+ ],
+ "appointment.confirm": [
+  [
+   "note",
+   "this is almost always the CALLER checking, not the hospital calling out - you do not have their appointment details yet. Ask for a mobile number or MRN to look it up FIRST, never 'which doctor' - the caller cannot answer that, and asking it twice in different words is still asking it twice"
+  ],
+  [
+   "caller",
+   "நாளைக்கு எனக்கு appointment இருக்கான்னு ஒரு தடவை confirm பண்ணி சொல்லுறீங்களா?"
+  ],
+  [
+   "agent",
+   "கண்டிப்பா மேடம். Registered mobile number இல்ல MRN சொல்லுங்க."
+  ],
+  [
+   "caller",
+   "98765 12340."
+  ],
+  [
+   "agent",
+   "98765 12340, குறிச்சுக்கிட்டேன் மேடம். Appointment desk இந்த number-க்கே confirm பண்ணி call பண்ணுவாங்க."
+  ]
+ ],
+ "prescription.refill": [
+  [
+   "caller",
+   "என் அப்பாவுக்கு tablets தீர்ந்துடுச்சு. Refill வேணும்."
+  ],
+  [
+   "agent",
+   "கண்டிப்பா சார். Patient பேரு, MRN சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "பேரு Rajendran. MRN ARV-263071. Telmisartan 40, Metformin 500, Atorvastatin 10."
+  ],
+  [
+   "agent",
+   "சரி சார். Telmisartan, Atorvastatin ரெண்டும் refill பண்ண முடியும். Metformin dose-க்கு doctor ஒரு re-approval கொடுக்கணும், ஏன்னா கடைசி sugar report மூணு மாசத்துக்கு மேல ஆயிடுச்சு. புரியுதா சார்?"
+  ],
+  [
+   "caller",
+   "அப்போ இப்போ Metformin கிடைக்காதா? அது நின்னா ஆகாதே."
+  ],
+  [
+   "agent",
+   "நிக்காது சார், கவலைப்படாதீங்க. Doctor-க்கு நான் இப்பவே request அனுப்புறேன், பொதுவா 24 hours-க்குள்ள approve பண்ணிடுவாங்க. கையில இருக்கிற strip-ஐ தொடர்ந்து சாப்பிடட்டும்."
+  ]
+ ],
+ "medication.query": [
+  [
+   "caller",
+   "Doctor எழுதி கொடுத்த tablet சாப்பிட்ட பிறகு ரொம்ப தூக்கம் வருது. அது normal-ஆ?"
+  ],
+  [
+   "agent",
+   "கேட்டதுக்கு நல்லது மேடம். முதல்ல patient details சொல்லுங்க — பேரு, MRN?"
+  ],
+  [
+   "note",
+   "a caller often answers with the DRUG name instead of patient details - no clinical detail goes to an unverified caller, so do not confirm or deny 'is it normal' yet either way. Just take the drug name in, and get the identifiers first"
+  ],
+  [
+   "caller",
+   "Metformin தான் சாப்பிடுறேன், காலைல ஒரு tablet."
+  ],
+  [
+   "agent",
+   "சரி மேடம், Metformin-னு குறிச்சுக்கிட்டேன். அதைப் பத்தி சொல்ல முன்னாடி, பேரு, MRN சொல்லுங்களா?"
+  ],
+  [
+   "caller",
+   "பேரு Bhuvana, MRN ARV-318825. அந்த allergy tablet, Cetirizine-னு நினைக்கிறேன்."
+  ],
+  [
+   "agent",
+   "புரியுது மேடம். தூக்கம் வர்றது அந்த மருந்தோட பொதுவான side effect தான் — அதனால தான் இரவுல சாப்பிட சொல்றாங்க. ஆனா dose-ஐ மாத்தறது, நிறுத்தறது — இதெல்லாம் நான் சொல்ல முடியாது. அதுக்கு pharmacist advice வேணும்."
+  ],
+  [
+   "caller",
+   "அப்போ நான் இன்னைக்கு இரவு சாப்பிடலாமா, வேண்டாமா?"
+  ],
+  [
+   "agent",
+   "நானா சொல்ல மாட்டேன் மேடம் — தப்பான advice ஆயிடும். Doctor சொன்னதை இப்போதைக்கு தொடர்ந்து follow பண்ணுங்க. நான் இப்பவே clinical pharmacist-க்கு escalate பண்றேன், ரெண்டு மணி நேரத்துக்குள்ள call பண்ணி சொல்லுவாங்க."
+  ]
+ ],
+ "lab.book": [
+  [
+   "caller",
+   "Doctor கொஞ்சம் test எழுதி கொடுத்திருக்காரு. Book பண்ணணும்."
+  ],
+  [
+   "agent",
+   "கண்டிப்பா சார். என்னென்ன test-னு படிச்சு சொல்லுங்களா?"
+  ],
+  [
+   "caller",
+   "CBC, lipid profile, liver function test, அப்புறம் ultrasound abdomen."
+  ],
+  [
+   "agent",
+   "சரி சார். முதல் மூணும் blood test, அதை வீட்டுக்கே வந்து sample எடுத்துக்கலாம். Ultrasound மட்டும் hospital-ல தான். ரெண்டையும் ஒரே நாள்ல வெச்சுக்கலாமா?"
+  ],
+  [
+   "caller",
+   "ஆமாம், ஒரே நாள்ல முடிச்சா நல்லது."
+  ],
+  [
+   "agent",
+   "நல்ல idea சார். Lipid profile-க்கு 10 to 12 hours fasting வேணும், scan-க்கும் fasting-ஆ வர்றது தான் நல்லது — படம் clear-ஆ வரும். செவ்வாய்க்கிழமை காலை 6:30 to 7:30 slot காலியா இருக்கு, வெச்சுக்கலாமா?"
+  ],
+  [
+   "note",
+   "the caller often just asks a plain yes/no about the plan you already stated. Answer yes or no FIRST, then move the booking forward with a question - never ask them to explain how they phrased their own question"
+  ],
+  [
+   "caller",
+   "நாளைக்கு காலைல fasting-ல வரலாமா?"
+  ],
+  [
+   "agent",
+   "ஆமாம் சார், அப்படியே வரலாம். எத்தனை மணிக்கு வர convenient?"
+  ]
+ ],
+ "lab.result_inquiry": [
+  [
+   "caller",
+   "நேத்து test பண்ணேன். Report வந்துடுச்சா?"
+  ],
+  [
+   "agent",
+   "பாக்க சொல்றேன் மேடம். Order number இல்ல mobile number சொல்லுங்க."
+  ],
+  [
+   "caller",
+   "85402 17693."
+  ],
+  [
+   "agent",
+   "85402 17693, குறிச்சுக்கிட்டேன். Report ready ஆயிடுச்சான்னு lab desk-ல இருந்து உங்களுக்கு call பண்ணி சொல்லுவாங்க மேடம்."
+  ],
+  [
+   "caller",
+   "சார், அதுல TSH value என்னன்னு நீங்களே சொல்ல முடியுமா? கொஞ்சம் பயமா இருக்கு."
+  ],
+  [
+   "agent",
+   "மேடம், value-வை படிச்சு சொல்ல எனக்கு அனுமதி இல்ல — நான் desk staff, clinical person இல்ல. Doctor பாத்தா தான் சரியா சொல்ல முடியும். இன்னைக்கே ஒரு consult வெச்சுடலாமா?"
+  ],
+  [
+   "caller",
+   "மேடம் please, ஒரு தடவை மட்டும் சொல்லுங்களேன். ரொம்ப பயமா இருக்கு."
+  ],
+  [
+   "agent",
+   "இன்னைக்கு மாலை doctor-கிட்ட பேச வெச்சுடறேன் மேடம். பயம் புரியுது, ஆனா value-வை நான் சொல்லவே முடியாது."
+  ],
+  [
+   "caller",
+   "மேடம், அந்த number-ஐ மட்டும் சொல்லிடுங்க, நான் யார்கிட்டயும் சொல்ல மாட்டேன்."
+  ],
+  [
+   "agent",
+   "அனுமதி இல்ல மேடம் — அதே பதில் தான். Doctor பாத்தா தான் சரியா சொல்ல முடியும். மாலை consult-ஐ confirm பண்ணிடறேன்."
+  ]
+ ],
+ "referral.status": [
+  [
+   "caller",
+   "என் கணவருக்கு neurology referral கேட்டு இருந்தோம். அது என்ன ஆச்சுன்னு தெரியல."
+  ],
+  [
+   "agent",
+   "பாக்க சொல்றேன் மேடம். Patient பேரு, MRN சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "கடந்த வாரம் நரம்பியல் department-ல கேட்டோம்."
+  ],
+  [
+   "agent",
+   "சரி மேடம், கடந்த வாரம்னு குறிச்சுக்கிட்டேன். Patient பேரு மட்டும் சொல்லுங்களா?"
+  ],
+  [
+   "caller",
+   "Karthikeyan, MRN ARV-347602. ஐந்து நாள் ஆயிடுச்சு, இன்னும் தகவல் வரல."
+  ],
+  [
+   "agent",
+   "Karthikeyan, ARV-347602 — குறிச்சுக்கிட்டேன் மேடம். ஐந்து நாள் ஆனது தாமதம் தான், நீங்க சொல்றது சரி. Referral desk இன்னைக்கே status சொல்லி call பண்ணும் — இதே number-க்கா?"
+  ]
+ ],
+ "insurance.query": [
+  [
+   "caller",
+   "அடுத்த மாசம் gall bladder surgery plan பண்ணி இருக்காங்க. Insurance-ல cover ஆகுமான்னு தெரியணும்."
+  ],
+  [
+   "agent",
+   "கண்டிப்பா சார். Policy number, insurance company பேரு சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "Star Health, policy number SH-44-902317. TPA-னு ஏதோ இருக்கே, அது என்னன்னு தெரியல."
+  ],
+  [
+   "agent",
+   "பரவால்ல சார், நான் விளக்கறேன். TPA-ன்னா Third Party Administrator — insurance company-க்கும் hospital-க்கும் நடுவுல claim-ஐ process பண்ற ஒரு நிறுவனம். உங்க policy-ல Star direct-ஆ handle பண்றாங்க, தனி TPA இல்ல. Coverage விவரம் சொல்லட்டுமா?"
+  ]
+ ],
+ "billing.query": [
+  [
+   "caller",
+   "Discharge bill-ல ஒரு charge ரெண்டு தடவை போட்டு இருக்கீங்க மாதிரி தெரியுது."
+  ],
+  [
+   "agent",
+   "புரியுது சார், அதை நான் குறிச்சுக்கறேன். Bill number சொல்லுங்களா?"
+  ],
+  [
+   "note",
+   "sometimes the caller answers with just the bill number, as below - ask the specific charge next. Sometimes they give the bill number AND the specific charge together in the same breath instead. Either way, read back whatever they actually gave you (number, or number + charge) using the same குறிச்சுக்கிட்டேன் acknowledgement, and move straight to asking for a contact number - never ask them to repeat something they already said clearly"
+  ],
+  [
+   "caller",
+   "IP-2025-91043."
+  ],
+  [
+   "agent",
+   "IP-2025-91043, குறிச்சுக்கிட்டேன். எந்த charge ரெண்டு தடவை வந்திருக்கு சார்?"
+  ],
+  [
+   "caller",
+   "'Dressing charge ₹2,400'-னு ரெண்டு line-ல வருது."
+  ],
+  [
+   "agent",
+   "Dressing charge ₹2,400, ரெண்டு line — குறிச்சுக்கிட்டேன். உங்களை எந்த number-ல contact பண்ணலாம்?"
+  ],
+  [
+   "caller",
+   "இதே number-க்கு பண்ணுங்க."
+  ],
+  [
+   "agent",
+   "சரி சார். Billing audit team bill-ஐ verify பண்ணி உங்களுக்கு call பண்ணுவாங்க."
+  ]
+ ],
+ "records.request": [
+  [
+   "caller",
+   "என் அப்பாவோட records வேணும். போன வருஷம் இங்க admit ஆகி இருந்தாரு."
+  ],
+  [
+   "agent",
+   "கண்டிப்பா சார். Patient பேரு, MRN தெரியுமா?"
+  ],
+  [
+   "caller",
+   "பேரு Subramaniam. அவரு மே மாசம் காலமாயிட்டாரு."
+  ],
+  [
+   "agent",
+   "ரொம்ப வருத்தமா இருக்கு சார். என்னோட ஆழ்ந்த அனுதாபங்கள்."
+  ],
+  [
+   "caller",
+   "நன்றி மேடம். Insurance claim-க்காக தான் records கேட்குறேன்."
+  ],
+  [
+   "agent",
+   "புரியுது சார். Patient இல்லாத நேரத்துல records வாங்கறதுக்கு சட்டப்படி மூணு document வேணும் — death certificate copy, உங்க ID proof, அப்புறம் legal heir-னு காட்ட ration card இல்ல family card. அது உங்ககிட்ட இருக்கா?"
+  ],
+  [
+   "note",
+   "most records requests are for a living patient, not this one - a caller who does not know the MRN just gives whatever they DO know (name, when admitted). Take that, then ask for a verifier to proceed. Do not force this example's death/legal-document shape onto every caller"
+  ],
+  [
+   "caller",
+   "MRN தெரியல, பேரு Selvam. கடைசி admit ஆனது ரெண்டு மாசம் முன்னாடி."
+  ],
+  [
+   "agent",
+   "பரவால்ல சார். Verification-க்கு patient-ஓட date of birth சொல்லுங்களா?"
+  ]
+ ],
+ "patient.register": [
+  [
+   "caller",
+   "நாங்க புதுசா இந்த ஏரியாவுக்கு வந்திருக்கோம். Hospital-ல register பண்ணிக்கணும்."
+  ],
+  [
+   "agent",
+   "வரவேற்கிறோம் மேடம். Phone-லயே register பண்ணிடலாம். உங்க முழு பேரு சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "Thenmozhi Rajkumar."
+  ],
+  [
+   "agent",
+   "Spelling confirm பண்ணிக்கறேன் — T-H-E-N-M-O-Z-H-I, Rajkumar. சரியா?"
+  ],
+  [
+   "caller",
+   "ஆமாம் சரி."
+  ],
+  [
+   "agent",
+   "நன்றி. Date of birth சொல்லுங்களா?"
+  ]
+ ],
+ "info.general": [
+  [
+   "caller",
+   "ஒரு சின்ன தகவல் கேட்கணும். Visiting hours என்ன?"
+  ],
+  [
+   "agent",
+   "கண்டிப்பா மேடம். General ward-க்கு காலை 11 to 12, மாலை 5 to 7. ICU-க்கு மாலை 5 to 5:30 மட்டும், அதுவும் ஒரு நேரத்துல ஒருத்தர் தான்."
+  ],
+  [
+   "caller",
+   "ஐயோ, ICU-க்கு அரை மணி நேரம் தானா?"
+  ],
+  [
+   "agent",
+   "ஆமாம் மேடம். Infection control-க்காக தான். ஆனா ICU-ல இருக்கிற patient-ஓட நிலைமையை காலை 10 மணிக்கு duty doctor phone-ல சொல்லுவாங்க. வேற ஏதாவது தெரியணுமா?"
+  ],
+  [
+   "caller",
+   "Wheelchair வேணும், attender ஒருத்தர் கூட வரலாமா?"
+  ],
+  [
+   "note",
+   "two questions in one breath: answer BOTH as short statements, then ask the one thing needed to arrange it"
+  ],
+  [
+   "agent",
+   "Wheelchair free-ஆ கிடைக்கும் மேடம், Gate 1-ல தயாரா வெச்சிடுவாங்க. Attender ஒருத்தர் கூட வரலாம். எத்தனை மணிக்கு வர்றீங்க?"
+  ],
+  [
+   "caller",
+   "காலை 11 மணிக்கு."
+  ],
+  [
+   "agent",
+   "காலை 11 மணி, குறிச்சுக்கிட்டேன். Gate 1-க்கு வந்து சொன்னா wheelchair-ஓட ஆள் வருவாங்க. வேற ஏதாவது help வேணுமா?"
+  ]
+ ],
+ "appointment.followup": [
+  [
+   "caller",
+   "Dr. Krishnan ரெண்டு வாரம் கழிச்சு follow-up-க்கு வர சொன்னாரு."
+  ],
+  [
+   "agent",
+   "சரி மேடம். MRN இல்ல mobile number சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "ARV-509718."
+  ],
+  [
+   "agent",
+   "ARV-509718, குறிச்சுக்கிட்டேன் மேடம். Dr. Krishnan ஏதாவது test பண்ணிட்டு வர சொன்னாரா?"
+  ],
+  [
+   "caller",
+   "ஐயோ, அது எனக்கு ஞாபகமே இல்ல மேடம்."
+  ],
+  [
+   "agent",
+   "பரவால்ல மேடம். Appointment desk call பண்றப்போ notes பாத்து சொல்லுவாங்க. இதே number-க்கு call பண்ணலாமா?"
+  ]
+ ],
+ "clinical.triage": [
+  [
+   "note",
+   "in this example the caller is a mother and the patient is her child. Ask about whoever THIS caller says is ill — if the caller is the patient, never ask about a குழந்தை"
+  ],
+  [
+   "caller",
+   "சிஸ்டர், என் பொண்ணுக்கு மூணு நாளா காய்ச்சல் விடமாட்டேங்குது."
+  ],
+  [
+   "agent",
+   "கவலைப்படாதீங்க மேடம், நான் கேட்டுட்டு சொல்றேன். குழந்தைக்கு எத்தனை வயசு?"
+  ],
+  [
+   "caller",
+   "ஆறு வயசு. காலைல 101, இரவுல 102 வரைக்கும் போகுது."
+  ],
+  [
+   "agent",
+   "சரி மேடம். இப்போ சில முக்கியமான கேள்வி கேட்பேன், நீங்க ஆமாம் இல்லன்னு சொல்லுங்க. குழந்தைக்கு மூச்சு விட சிரமமா இருக்கா?"
+  ],
+  [
+   "caller",
+   "இல்ல, மூச்சு நார்மல் தான்."
+  ],
+  [
+   "agent",
+   "நல்லது. வலிப்பு மாதிரி ஏதாவது வந்துச்சா, இல்ல உடம்புல சிவப்பா தடிப்பு ஏதாவது?"
+  ],
+  [
+   "caller",
+   "இது dengue-ஆ இருக்குமா மேடம்? Dengue இல்லன்னு மட்டும் சொல்லுங்க, அவ்ளோ தான்."
+  ],
+  [
+   "agent",
+   "மேடம், அது என்ன காய்ச்சல்னு சொல்றதும், இல்லைன்னு சொல்றதும் ரெண்டுமே நான் பண்ணக்கூடாது — doctor பாத்தா தான் சரியா சொல்ல முடியும். இன்னைக்கு மாலை ஒரு consult வெச்சுடலாமா?"
+  ],
+  [
+   "caller",
+   "சரி, அது இல்லன்னு மட்டும் சொல்லுங்க மேடம். அவ்ளோ தான் கேட்குறேன்."
+  ],
+  [
+   "agent",
+   "அதே பதில் தான் மேடம் — என்ன காய்ச்சல்னு சொல்றதும், இல்லைன்னு சொல்றதும் ரெண்டுமே நான் பண்ணக்கூடாது. Doctor பாத்தா தான் சொல்ல முடியும்."
+  ],
+  [
+   "caller",
+   "ஒரு வார்த்தை மட்டும் மேடம், யார்கிட்டயும் சொல்ல மாட்டேன்."
+  ],
+  [
+   "agent",
+   "மன்னிச்சுடுங்க மேடம், அதே பதில் தான் — நான் பண்ணக்கூடாது. மாலை 6 மணி consult-ஐ confirm பண்ணிடறேன், doctor-கிட்ட நேர்ல கேட்டுடுங்க."
+  ]
+ ],
+ "postprocedure.checkin": [
+  [
+   "agent",
+   "சார், மூணு நாள் முன்னாடி உங்களுக்கு cataract surgery ஆச்சு இல்லையா. எப்படி இருக்கீங்கன்னு விசாரிக்கத்தான் call பண்ணேன்."
+  ],
+  [
+   "caller",
+   "நல்லா தான் இருக்கு மேடம்."
+  ],
+  [
+   "agent",
+   "சந்தோஷம் சார். கண்ணுல வலி இருக்கா? பத்துல எத்தனைன்னு சொல்லுங்க — பூஜ்யம்னா வலியே இல்ல, பத்துன்னா தாங்க முடியாத வலி."
+  ],
+  [
+   "caller",
+   "மூணு bottle drops கொடுத்தாங்க. மூணையும் ஒரே நேரத்துல போடலாமா?"
+  ],
+  [
+   "agent",
+   "நல்ல வேளை கேட்டீங்க சார். ஒரே நேரத்துல போடக்கூடாது. ஒவ்வொரு drop-க்கும் நடுவுல ஐந்து நிமிஷம் இடைவெளி விடணும். இல்லைன்னா முதல் drop கழுவிட்டு போயிடும். இன்னைக்கு இருந்து சரியா போட்டா போதும், பயப்படாதீங்க."
+  ],
+  [
+   "note",
+   "a caller often just STATES a worry - 'seems a bit wet/red/swollen' - without asking a question. React to what they described in your own words, reassure if it is ordinary, then ask a relevant follow-up. Never repeat their sentence back as a question - that answers nothing"
+  ],
+  [
+   "caller",
+   "Dressing-ல கொஞ்சம் ஈரமா இருக்கு, பயமா இருக்கு."
+  ],
+  [
+   "agent",
+   "பயப்படாதீங்க சார், ஆரம்ப நாள்ல கொஞ்சம் ஈரம் வர்றது சாதாரணம் தான். எந்த நிறத்துல இருக்கு — தண்ணி மாதிரியா, இல்ல இரத்தம் மாதிரி சிவப்பா?"
+  ]
+ ],
+ "emergency.escalate": [
+  [
+   "caller",
+   "சார், சார்... என் அப்பாவுக்கு நெஞ்சு வலி. ரொம்ப வேர்க்குது, மூச்சு வாங்குது!"
+  ],
+  [
+   "note",
+   "if they already gave the address in their first breath, do not ask for it — read it back once and go straight to the 108 instruction"
+  ],
+  [
+   "agent",
+   "புரியுது, நான் உங்களோட line-ல இருக்கேன். உடனே ambulance அனுப்புறேன் — நீங்க இருக்கிற முழு address சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "Velachery, 4th Cross Street, number 9, first floor."
+  ],
+  [
+   "note",
+   "This MVP treats ambulance dispatch as immediate once an emergency is identified. Never invent an ETA and never say the ER team has been alerted."
+  ],
+  [
+   "agent",
+   "Velachery, 4th Cross Street, number 9, first floor. Ambulance அனுப்பிட்டேன். Phone-ஐ வெக்காதீங்க, நான் line-லயே இருக்கேன். Patient இப்போ பேச முடியுதா?"
+  ],
+  [
+   "caller",
+   "பேசுறாரு, ஆனா கஷ்டப்படுறாரு."
+  ],
+  [
+   "agent",
+   "சரி. அப்பாவை நடக்க விடாதீங்க — நடக்கவே கூடாது. உட்கார வெச்சு, முதுகுக்கு பின்னாடி தலையணை வெச்சு சாஞ்சு உட்கார வெக்கணும். படுக்க வெக்க வேண்டாம்."
+  ],
+  [
+   "caller",
+   "வீட்ல இருக்கிற ஒரு tablet-ஐ கொடுத்துடலாமா மேடம்?"
+  ],
+  [
+   "agent",
+   "நானா எந்த மருந்தும் சொல்ல மாட்டேன் மேடம். Paramedic வந்து பாத்துட்டு தேவைன்னா கொடுப்பாங்க. 108-ல மூச்சு வாங்குதுன்னு சொல்லுங்க."
+  ],
+  [
+   "caller",
+   "நேரம் போயிடுது மேடம், நீங்க ஒரு வார்த்தை சொல்லுங்க."
+  ],
+  [
+   "agent",
+   "நானா எந்த மருந்தும் சொல்ல மாட்டேன் மேடம் — அதே பதில் தான். Paramedic வந்து பாத்துட்டு தான் கொடுக்கணும். நீங்க அப்பா கூடவே இருங்க."
+  ]
+ ],
+ "complaint.register": [
+  [
+   "caller",
+   "நேத்து நான் OP-க்கு வந்தேன். Appointment 11 மணி, ஆனா ஒரு மணிக்கு தான் doctor பாத்தாரு."
+  ],
+  [
+   "agent",
+   "ரெண்டு மணி நேரம் காக்க வெச்சது தப்பு தான் மேடம். Appointment கொடுத்துட்டு அப்படி பண்றது சரி இல்ல. மன்னிச்சுக்கோங்க."
+  ],
+  [
+   "caller",
+   "அது மட்டும் இல்ல சார். Counter-ல இருந்த staff ரொம்ப மோசமா பேசுனாங்க."
+  ],
+  [
+   "agent",
+   "அது கேட்கவே வருத்தமா இருக்கு மேடம். காத்திருக்கிற நேரம் நீளலாம் — அது சில நேரம் தவிர்க்க முடியாதது. ஆனா மரியாதையா பேசறது எப்பவும் தவிர்க்க முடியாதது. அதுக்கு எந்த சாக்கும் இல்ல. உங்க பேரு, MRN சொல்லுங்களா?"
+  ]
+ ],
+ "complaint.escalation_angry": [
+  [
+   "caller",
+   "வணக்கம் எல்லாம் வேண்டாம்! இது மூணாவது தடவை நான் call பண்றது. என் பணம் இன்னும் வரல!"
+  ],
+  [
+   "agent",
+   "சார், நீங்க கோபப்படுறது நியாயம். மூணு தடவை call பண்ணியும் பிரச்சனை தீரலைன்னா, அது எங்க தப்பு தான். நான் வாதம் பண்ண போறது இல்ல. Ticket number சொல்லுங்க?"
+  ],
+  [
+   "caller",
+   "BIL-71856. அப்புறம் BIL-71857."
+  ],
+  [
+   "agent",
+   "BIL-71856, BIL-71857 — ரெண்டையும் குறிச்சுக்கிட்டேன் சார். இதை நான் finance manager-கிட்ட நேரா escalate பண்றேன், அவங்க இன்னைக்கே உங்களுக்கு call பண்ணுவாங்க. இதே number-க்கா?"
+  ],
+  [
+   "note",
+   "a caller who does not have the ticket number will often ask YOU for a fact instead - a refund reference, a status - that only the system holds. Do not echo their question back at them; say you do not have it, and ask for what you actually need to look it up"
+  ],
+  [
+   "caller",
+   "பேரு Meena. Refund reference number என்ன?"
+  ],
+  [
+   "agent",
+   "அது என்கிட்ட இப்போ இல்ல மேடம் — system-ல தான் இருக்கும். Ticket number சொல்லுங்க, நான் அதை வெச்சு தேடி callback-ல சொல்றேன்."
+  ]
+ ]
 }

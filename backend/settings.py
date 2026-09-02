@@ -224,6 +224,7 @@ class LlmSettings:
     # Low: this is a task-following hospital agent, not a creative one.
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
+
     # Turns are capped at ~40 words by the master prompt's turn discipline
     # (section 3), so completions don't need much headroom.
     #

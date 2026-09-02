@@ -57,8 +57,12 @@ NUM_GPU = _LLM.num_gpu
 # them in the generated Modelfile as well as the checked-in one: run.sh builds
 # through this script, so omitting them here silently disables the anti-loop
 # configuration documented in the repo-root Modelfile.
-REPEAT_PENALTY = 1.15
-REPEAT_LAST_N = 128
+# See the repo-root Modelfile for the measurement behind 1.05/64: at 1.15 over
+# a 128-token window the penalty covered most of a legitimate Tamil turn, and
+# because Tamil re-uses its case suffixes and light verbs constantly it pushed
+# the decoder onto its second choice mid-phrase and produced broken grammar.
+REPEAT_PENALTY = 1.05
+REPEAT_LAST_N = 64
 
 # Best first. The current conversation path is speech-only, so these are
 # ordered by measured Tamil/English register quality rather than tool support.

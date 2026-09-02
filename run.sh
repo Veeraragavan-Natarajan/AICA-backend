@@ -9,8 +9,10 @@
 # installs requirements only when they are actually missing, seeds .env,
 # STARTS Ollama if it is not already up (with the three environment settings
 # that are worth 2.2x, which only apply if they are set before Ollama starts),
-# pulls the base model and builds aruvi-base from the Modelfile, starts the
-# API, waits until every component reports ready, and prints the console URL.
+# pulls the base model and builds aruvi-base from the Modelfile, preloads it so
+# the first caller never pays the cold-start cost, starts exactly one API
+# worker, waits until every component and the fixed-phrase TTS cache are ready,
+# and prints the console URL.
 # Ctrl+C stops it cleanly.
 #
 # It does NOT install Python or Ollama - those are system installs and it says
@@ -187,7 +189,15 @@ elif ! ollama_up && command -v ollama >/dev/null 2>&1; then
   export OLLAMA_FLASH_ATTENTION="${OLLAMA_FLASH_ATTENTION:-1}"
   export OLLAMA_KV_CACHE_TYPE="${OLLAMA_KV_CACHE_TYPE:-q8_0}"
   export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"
-  say "Starting Ollama (flash attention, q8_0 KV cache, keep-alive forever)"
+  # ONE MODEL, ONE SLOT. Both default to more than that, and on a 4GB card both
+  # multiply the thing that does not fit: a second resident model holds its own
+  # weights, and a second parallel slot holds its own KV cache. Either one puts
+  # the card back over the line where Windows WDDM spills to system RAM over
+  # PCIe - the silent 114s turn the Modelfile's num_gpu note describes. This
+  # server takes one call at a time, so neither buys anything to trade away.
+  export OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-1}"
+  export OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-1}"
+  say "Starting Ollama (flash attention, q8_0 KV cache, keep-alive forever, single slot)"
   ollama serve > "$LOG_DIR/ollama.log" 2>&1 &
   for _ in $(seq 1 30); do ollama_up && break; sleep 1; done
   ollama_up || warn "Ollama did not come up - see logs/ollama.log."
@@ -197,14 +207,94 @@ if [[ -z "${SKIP_OLLAMA:-}" ]] && ollama_up; then
   # An Ollama that was already running has whatever environment it was started
   # with, and there is no way to read that back over the API - so this stays a
   # warning for that case.
-  for var in OLLAMA_FLASH_ATTENTION OLLAMA_KV_CACHE_TYPE OLLAMA_KEEP_ALIVE; do
+  for var in OLLAMA_FLASH_ATTENTION OLLAMA_KV_CACHE_TYPE OLLAMA_KEEP_ALIVE \
+             OLLAMA_MAX_LOADED_MODELS OLLAMA_NUM_PARALLEL; do
     if [[ -z "${!var:-}" ]]; then
       warn "$var is not set for the already-running Ollama - see HANDOFF.md §3."
     fi
   done
 
   TAGS="$(curl -fsS -m 5 "$OLLAMA_URL/api/tags" || true)"
-  if grep -q "\"$MODEL_NAME" <<<"$TAGS"; then
+  REBUILD_FOR_PEAK=""
+
+  # ---- clear the card before measuring it -------------------------------
+  #
+  # Free VRAM decides whether this run gets full GPU offload (31.3 tok/s) or
+  # Ollama's conservative split (12.9 tok/s), and the reading is worthless
+  # while something Ollama loaded on a PREVIOUS run is still resident. With
+  # OLLAMA_KEEP_ALIVE=-1 - which this script sets, deliberately - that is the
+  # normal state, and it is self-defeating: the leftover model's own weights
+  # and KV cache are counted as "in use", the check below sees too little free
+  # memory, and the run settles for the slow split on a card that was actually
+  # free. Worse, the previous copy may be the model we are about to REBUILD,
+  # in which case the rebuild lands but the old one keeps answering.
+  #
+  # Unloading is a keep_alive of 0 against each resident model. It touches
+  # nothing but Ollama's own models - never another process's memory - and
+  # costs nothing, because the model this call needs is preloaded again a few
+  # lines below and every other one was not wanted anyway.
+  RESIDENT="$(curl -fsS -m 5 "$OLLAMA_URL/api/ps" 2>/dev/null \
+              | tr ',{}' '\n\n\n' | grep -o '"model":"[^"]*"' | cut -d'"' -f4 || true)"
+  if [[ -n "$RESIDENT" ]]; then
+    say "Unloading resident model(s) to free the GPU: $(tr '\n' ' ' <<<"$RESIDENT")"
+    while read -r loaded; do
+      [[ -z "$loaded" ]] && continue
+      curl -fsS -m 10 "$OLLAMA_URL/api/generate" \
+        -d "{\"model\":\"$loaded\",\"keep_alive\":0}" >/dev/null 2>&1 || true
+    done <<<"$RESIDENT"
+    # The unload is asynchronous; nvidia-smi lags it by a moment.
+    for _ in $(seq 1 10); do
+      curl -fsS -m 5 "$OLLAMA_URL/api/ps" 2>/dev/null | grep -q '"model"' || break
+      sleep 1
+    done
+  fi
+  # On an unloaded model, free VRAM is the real capacity available to it. If
+  # this card has the measured 3400 MiB headroom and the operator did not set a
+  # different layer count, bake in full offload: it measured 31.3 tok/s versus
+  # 12.9 tok/s with Ollama's conservative split. Below the threshold, leave it
+  # adaptive; forcing 99 there makes every request fail instead of degrading.
+  # The "already loaded" guard the unload above replaces: with nothing
+  # resident, the reading is the card's real capacity every run, so a machine
+  # that was too busy last time can pick up full offload on this one.
+  if [[ -z "${LLM_NUM_GPU:-}" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    FREE_MIB="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null \
+                | head -1 | tr -dc '0-9')"
+    if [[ -n "${FREE_MIB:-}" ]] && (( FREE_MIB >= 3400 )); then
+      export LLM_NUM_GPU=99
+      if grep -q "\"$MODEL_NAME" <<<"$TAGS" \
+         && ! ollama show "$MODEL_NAME" --modelfile 2>/dev/null \
+              | grep -Eq '^PARAMETER[[:space:]]+num_gpu[[:space:]]+99([[:space:]]|$)'; then
+        REBUILD_FOR_PEAK=1
+      fi
+      say "${FREE_MIB} MiB VRAM free; selecting full LLM GPU offload"
+    else
+      say "${FREE_MIB:-unknown} MiB VRAM free; keeping Ollama's adaptive GPU fit"
+      # NAME WHAT IS HOLDING THE CARD. "Close optional GPU applications" is
+      # advice nobody can act on - the culprits are WebView2 helpers with names
+      # like msedgewebview2.exe, four of them, none obviously belonging to the
+      # chat app that spawned it. Measured, ~1.2 GB of this card was held that
+      # way, which is the whole difference between 12.9 and 31.3 tok/s.
+      #
+      # Only the rows that carry a real number. On Windows the driver is in
+      # WDDM mode and nvidia-smi cannot see per-process VRAM at all - every row
+      # comes back "[N/A], C:\...\SearchHost.exe", which is worse than silence
+      # because it names innocent system processes as the culprit. Task Manager
+      # DOES have the figure there, under Details > Dedicated GPU memory, so
+      # that is where this points instead of printing a list it cannot rank.
+      HOGS="$(nvidia-smi --query-compute-apps=used_memory,process_name \
+                --format=csv,noheader,nounits 2>/dev/null \
+              | grep -E '^[0-9]+,' | sort -rn | head -5)"
+      if [[ -n "${HOGS:-}" ]]; then
+        warn "Holding VRAM right now (close these for the 2.2x, then rerun):"
+        while read -r hog; do [[ -n "$hog" ]] && warn "  ${hog} MiB"; done <<<"$HOGS"
+      else
+        warn "  Need 3400 MiB free for full offload. Task Manager > Details >"
+        warn "  Dedicated GPU memory shows who has it (usually msedgewebview2.exe)."
+      fi
+    fi
+  fi
+
+  if grep -q "\"$MODEL_NAME" <<<"$TAGS" && [[ -z "$REBUILD_FOR_PEAK" ]]; then
     say "Ollama has $MODEL_NAME"
   elif command -v ollama >/dev/null 2>&1; then
     # Pulled explicitly rather than left to `ollama create`, so a fresh machine
@@ -218,11 +308,55 @@ if [[ -z "${SKIP_OLLAMA:-}" ]] && ollama_up; then
     # this line pinned num_ctx from the Modelfile while setup_model.py pinned
     # its own 8192, and whichever had been run last decided what Ollama really
     # served. Both now read LLM_NUM_CTX / LLM_NUM_GPU out of .env.
-    say "Building $MODEL_NAME (one time)"
+    if [[ -n "$REBUILD_FOR_PEAK" ]]; then
+      say "Rebuilding $MODEL_NAME for full GPU offload"
+    else
+      say "Building $MODEL_NAME (one time)"
+    fi
     "$PY" -m backend.scripts.setup_model --target "$MODEL_NAME"
   else
     warn "$MODEL_NAME is not in Ollama and the 'ollama' CLI is not on PATH."
     warn "  ollama create $MODEL_NAME -f Modelfile"
+  fi
+
+  # Load the model NOW, before the first caller. Ollama otherwise waits until
+  # the first chat request to allocate weights/KV cache; measured cold-start
+  # cost on this machine was 14.9 seconds. An empty generate request is the
+  # documented load-only path, and keep_alive=-1 prevents idle eviction.
+  say "Preloading $MODEL_NAME"
+  if ! "$PY" - "$OLLAMA_URL" "$MODEL_NAME" <<'PY'
+import json
+import sys
+import urllib.request
+
+url, model = sys.argv[1:]
+request = urllib.request.Request(
+    f"{url.rstrip('/')}/api/generate",
+    data=json.dumps({"model": model, "prompt": "", "stream": False, "keep_alive": -1}).encode(),
+    headers={"Content-Type": "application/json"},
+)
+with urllib.request.urlopen(request, timeout=300) as response:
+    if response.status != 200:
+        raise SystemExit(f"Ollama preload returned HTTP {response.status}")
+PY
+  then
+    die "Could not preload $MODEL_NAME. The first caller would hit a broken or cold LLM; see Ollama's log."
+  fi
+
+  # This is the measured peak path for the 4 GB RTX 2050. Report it rather
+  # than silently accepting a CPU/GPU split: a split works, but generation was
+  # 12.9 tok/s versus 31.3 tok/s at 100% GPU. Do not kill unrelated desktop
+  # applications here; the operator decides what may be closed.
+  if command -v ollama >/dev/null 2>&1; then
+    MODEL_RESIDENCY="$(ollama ps 2>/dev/null | grep -F "$MODEL_NAME" || true)"
+    if grep -q "100% GPU" <<<"$MODEL_RESIDENCY"; then
+      say "$MODEL_NAME is resident at 100% GPU"
+    elif [[ -n "$MODEL_RESIDENCY" ]]; then
+      warn "$MODEL_NAME is loaded but not at 100% GPU; generation will be slower."
+      warn "  Close optional GPU applications, set LLM_NUM_GPU=99, rebuild, and rerun."
+    else
+      die "$MODEL_NAME did not remain resident after preload."
+    fi
   fi
 
   # THE VRAM PRECONDITION, which is not self-enforcing. Full offload measured
@@ -278,11 +412,16 @@ fi
 
 # stdout AND stderr to a file: several real bugs in this project were only ever
 # visible in the server log, and a backgrounded process has no console.
-RELOAD_FLAG=()
-[[ -n "${RELOAD:-}" ]] && RELOAD_FLAG=(--reload)
+UVICORN_MODE=(--workers 1)
+if [[ -n "${RELOAD:-}" ]]; then
+  # Reload is explicitly development-only. It adds a supervisor process and
+  # drops active calls on code changes, so the peak/default path never uses it.
+  UVICORN_MODE=(--reload)
+  warn "RELOAD is enabled: development convenience, not peak performance."
+fi
 
-say "Starting API on $BACKEND_HOST:$BACKEND_PORT (log: ${LOG_FILE#$ROOT_DIR/})"
-"$PY" -m uvicorn backend.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" "${RELOAD_FLAG[@]}" \
+say "Starting one API worker on $BACKEND_HOST:$BACKEND_PORT (log: ${LOG_FILE#$ROOT_DIR/})"
+"$PY" -m uvicorn backend.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" "${UVICORN_MODE[@]}" \
   > "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
@@ -312,6 +451,24 @@ if [[ -z "${HEALTH:-}" ]]; then
   warn "The server did not become healthy in time. Last lines of the log:"
   tail -20 "$LOG_FILE" >&2
   exit 1
+fi
+
+# Health becomes available as soon as the adapters load, while the fixed TTS
+# lines continue warming in the background. Wait for that cache too: otherwise
+# run.sh can print READY and the first caller still pays twenty network
+# synthesis round-trips. This is an optimisation, so a failed warm is reported
+# without taking down an otherwise healthy server.
+say "Warming fixed TTS phrases..."
+TTS_WARMED=""
+for _ in $(seq 1 45); do
+  TTS_WARMED="$(grep -E 'TTS cache warmed with [0-9]+ of [0-9]+ fixed lines' "$LOG_FILE" | tail -1 || true)"
+  [[ -n "$TTS_WARMED" ]] && break
+  sleep 1
+done
+if [[ -n "$TTS_WARMED" ]]; then
+  say "$TTS_WARMED"
+else
+  warn "TTS cache warm did not finish within 45 seconds; live synthesis is still available."
 fi
 
 # A server that answers requests is not evidence that ASR, the LLM or TTS

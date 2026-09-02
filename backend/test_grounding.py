@@ -145,6 +145,26 @@ def test_booking_and_cancelling_claims_need_their_own_tools() -> None:
     ]
 
 
+def test_promising_the_ambulance_will_arrive_is_a_dispatch_claim() -> None:
+    """Observed live at temperature 0 on a chest-pain call, with the pattern
+    matching completed forms only: "இப்பவே 108-க்கு call பண்ணுங்க, ambulance
+    உடனே வரும். நான் ER team-கிட்ட சொல்லிடறேன்." Nothing in this process can
+    make either sentence true, and a caller who believes the first one stops
+    calling 108."""
+    for reply in (
+        "இப்பவே 108-க்கு call பண்ணுங்க, ambulance உடனே வரும்.",
+        "Ambulance கிளம்பிடுச்சு Sir.",
+        "The ambulance is on the way.",
+    ):
+        assert "said an ambulance has been dispatched" in unbacked_action_claims(reply, set()), reply
+
+
+def test_saying_the_er_team_was_alerted_is_a_claim_of_its_own() -> None:
+    assert unbacked_action_claims("நான் ER team-கிட்ட சொல்லிடறேன்.", set()) == [
+        "said the ER team has been alerted"
+    ]
+
+
 if __name__ == "__main__":
     test_extracts_structured_ids_and_mobiles()
     test_mobile_is_normalised_so_spaced_and_unspaced_forms_match()

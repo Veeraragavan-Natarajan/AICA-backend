@@ -126,6 +126,9 @@ class TurnScore:
     symbols: bool
     word_count: int
     question_count: int
+    # The words the Tamil ratio was computed over: word_count minus the ones
+    # Sec2 forces to be Latin and the ones the caller supplied. See score_reply.
+    scored_words: int = 0
     fabricated: list[str] = field(default_factory=list)
     # Actions claimed as done with no tool call behind them - see
     # backend/grounding.py. A turn carrying one is never clean.
@@ -137,7 +140,7 @@ class TurnScore:
         if not self.reply.strip():
             issues.append("EMPTY reply")
             return issues
-        if self.tamil_ratio < 0.35:
+        if self.scored_words >= _MIN_WORDS_TO_SCORE_RATIO and self.tamil_ratio < 0.35:
             issues.append(f"too little Tamil ({self.tamil_ratio:.0%} of words)")
         # There is deliberately NO per-turn "too much Tamil" check. Sec2's
         # "roughly 65% Tamil / 35% English" is a property of a CALL, not of
@@ -163,8 +166,34 @@ class TurnScore:
         return issues
 
 
+# Words that are Latin because the register rule SAYS they must be, and that
+# therefore say nothing about whether the agent is drifting into English.
+#
+# Sec2 is explicit on both: "ALL numbers, dates, times, money, IDs in Latin
+# digits/English" and "Write `Sir` in Latin script for a male caller". Counting
+# them against the Tamil ratio marks the agent down for obeying its own prompt,
+# and on a short turn that is the whole score: "98407 21534, குறிச்சுக்கிட்டேன்
+# Sir." scored 25% Tamil, of which three of the four words had no choice.
+#
+# This was measuring the wrong thing, not aiming at the wrong number - the
+# 65/35 target is about prose drifting into English, and a phone number is not
+# prose. The call-level ratio is unchanged in what it means; it just stops
+# being dominated by digits.
+_MANDATED_LATIN_RE = re.compile(r"^(?:\d+|sir|madam)$", re.IGNORECASE)
+
+# Below this a per-turn ratio is noise rather than a measurement: "Kavitha Sir.
+# Mobile number சொல்லுங்க?" is exactly how a Chennai hospital desk speaks, and
+# with three scoreable words no threshold can tell it from a register failure.
+# Drift is a property of a stretch of speech, which is what the call-level
+# ratio measures and why that one has no floor.
+_MIN_WORDS_TO_SCORE_RATIO = 6
+
+
 def score_reply(
-    reply: str, ungrounded: tuple[str, ...] = (), claims: tuple[str, ...] = ()
+    reply: str,
+    ungrounded: tuple[str, ...] = (),
+    claims: tuple[str, ...] = (),
+    caller_said: str = "",
 ) -> TurnScore:
     """Score one reply.
 
@@ -172,8 +201,19 @@ def score_reply(
     has the call's actual tool results in hand and so can tell an ID the agent
     looked up from one it made up - including the ones it copies verbatim out
     of its own few-shot exemplars, which look entirely plausible.
+
+    `caller_said` is everything the caller has said this call. A Latin word the
+    agent got FROM the caller - their name, their doctor's name, the department
+    they asked for - is the ledger working, not the agent choosing English, so
+    it is excluded from the ratio the same way digits are.
     """
-    words = _WORD_RE.findall(reply)
+    caller_words = {w.casefold() for w in _WORD_RE.findall(caller_said)}
+    words = [
+        w
+        for w in _WORD_RE.findall(reply)
+        if not _MANDATED_LATIN_RE.match(w)
+        and not (w.casefold() in caller_words and not _TAMIL_RE.search(w))
+    ]
     tamil_words = [w for w in words if _TAMIL_RE.search(w)]
     return TurnScore(
         reply=reply,
@@ -181,7 +221,8 @@ def score_reply(
         has_english=bool(_LATIN_RE.search(reply)),
         wrong_script=bool(_WRONG_SCRIPT_RE.search(reply)),
         symbols=bool(_SPOKEN_SYMBOL_RE.search(reply)),
-        word_count=len(words),
+        word_count=len(_WORD_RE.findall(reply)),
+        scored_words=len(words),
         question_count=reply.count("?"),
         fabricated=sorted(set(ungrounded) | set(_FABRICATION_RE.findall(reply))),
         unbacked_claims=tuple(claims),
@@ -228,7 +269,7 @@ async def main() -> None:
                 total += 1
                 continue
 
-            score = score_reply(reply, ungrounded, claims)
+            score = score_reply(reply, ungrounded, claims, caller_said=" ".join(scenario.turns))
             call_words += _WORD_RE.findall(reply)
             print(f"agent : {reply}")
             print(

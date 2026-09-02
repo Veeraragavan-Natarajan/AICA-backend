@@ -28,6 +28,11 @@ class ToolCall:
 class LlmReply:
     content: str
     tool_calls: tuple[ToolCall, ...] = ()
+    # "length" when the server stopped at max_tokens rather than because the
+    # model finished. conversation.py needs to know: the tail of a
+    # length-stopped reply is a fragment cut mid-word, and on a voice channel
+    # that fragment gets SPOKEN.
+    finish_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +116,14 @@ class LlmClient:
             temperature=self.settings.temperature,
             max_tokens=max_tokens or self.settings.max_tokens,
             stream=True,
+            # DO NOT add repeat_penalty / top_k / frequency_penalty here. This
+            # is Ollama's OpenAI-COMPATIBLE endpoint and it silently drops all
+            # three - an `options` object in the body, and frequency_penalty
+            # as a top-level field, both verified to leave generation
+            # byte-identical at 1.0 and at 2.5. Nothing errors; the value is
+            # just discarded, which is how a bad repeat_penalty went unnoticed.
+            # Sampling other than temperature lives in the Modelfile, which is
+            # the only thing this server actually reads it from.
         )
 
         content_parts: list[str] = []
@@ -118,6 +131,7 @@ class LlmClient:
         # chunks: id/name usually arrive in the first delta for that index,
         # argument fragments (partial JSON) keep arriving after.
         pending_calls: dict[int, dict[str, str]] = {}
+        finish_reason: str | None = None
 
         async for chunk in stream:
             if not chunk.choices:
@@ -125,6 +139,11 @@ class LlmClient:
                 # with an empty choices list; indexing [0] on it would raise
                 # mid-turn.
                 continue
+            # getattr, not attribute access: this is a wire object from an
+            # arbitrary OpenAI-compatible server, and a missing optional field
+            # must not raise mid-turn and drop the caller's reply.
+            if getattr(chunk.choices[0], "finish_reason", None):
+                finish_reason = chunk.choices[0].finish_reason
             delta = chunk.choices[0].delta
             if delta.content:
                 content_parts.append(delta.content)
@@ -144,7 +163,13 @@ class LlmClient:
             for _, slot in sorted(pending_calls.items())
             if slot["name"]
         )
-        yield ReplyComplete(LlmReply(content="".join(content_parts), tool_calls=tool_calls))
+        yield ReplyComplete(
+            LlmReply(
+                content="".join(content_parts),
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+            )
+        )
 
 
 def _parse_arguments(raw: str) -> dict:

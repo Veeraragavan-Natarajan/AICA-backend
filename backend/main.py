@@ -122,10 +122,10 @@ def _warm(tts) -> None:
         _ECHO_RECOVERY,
         *_split_reply_into_clauses(_OUT_OF_SCOPE),
         # The openers the model reaches for on almost every call.
-        "சரி சார்.",
-        "கண்டிப்பா சார்.",
-        "நன்றி சார்.",
-        "புரியுது சார்.",
+        "சரி Sir.",
+        "கண்டிப்பா Sir.",
+        "நன்றி Sir.",
+        "புரியுது Sir.",
     ]
     warmed = 0
     for line in lines:

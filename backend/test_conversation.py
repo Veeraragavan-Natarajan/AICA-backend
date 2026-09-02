@@ -14,11 +14,16 @@ import logging
 
 from .conversation import (
     KNOWN_PLACEHOLDERS,
+    _ACTION_RECOVERY,
     _CANNOT_RECALL,
+    _DISTRESS_CLARIFICATION,
     _ECHO_RECOVERY,
+    _EMERGENCY_ACTION_RECOVERY,
+    _EMERGENCY_OPENING,
     _EMERGENCY_STUCK_REPLIES,
     _OUT_OF_SCOPE,
     _STUCK_REPLIES,
+    _normalize_spoken_register,
     _with_language_reminder,
     AgentClause,
     AgentTurn,
@@ -85,6 +90,7 @@ def _captured_log_records(logger_name: str):
 
 def _make_manager() -> ConversationManager:
     manager = ConversationManager(ConversationSettings())
+    manager._deterministic_flows = False
     # Stub the builder rather than reading the real prompt files: these tests
     # assert conversation plumbing, not prompt content.
     manager.prompts._core = TEMPLATE
@@ -126,6 +132,62 @@ async def test_handle_utterance_without_active_session_raises() -> None:
     raise AssertionError("handle_utterance must refuse to run without an active session")
 
 
+async def test_an_ordinary_hospital_turn_is_answered_by_the_model() -> None:
+    """Two tests used to stand here asserting `llm.calls == []` on a dietician
+    request and on a booking - that is, requiring that the model NOT be asked.
+    They passed against a regex decision tree that answered fifteen intents
+    from fixed strings, and that tree is why callers heard the same sentence
+    over and over: it recomputed its state from the transcript every turn, so
+    any answer its patterns did not recognise left it on the same branch. A
+    date of birth spoken as "17-04-1968" never contains the literal words
+    "date of birth", so that branch never advanced at all.
+
+    So this asserts the opposite, and deliberately: ordinary hospital work is a
+    conversation and reaches the model. What must NOT reach it is a hard
+    clinical refusal, which is the test below.
+    """
+    manager = _make_manager()
+    manager.start_call("conn-general", agent_name="Gayathri")
+    llm = _ScriptedLlm([LlmReply(content="கண்டிப்பா Sir. Patient பேரு சொல்லுங்க?")])
+
+    events = [
+        event
+        async for event in manager.stream_utterance(
+            "conn-general", llm, "dietician appointment வேணும்"
+        )
+    ]
+
+    assert llm.calls, "an ordinary hospital request must be answered by the model"
+    assert events[-1].text != _OUT_OF_SCOPE
+    # Dietetics is a department this desk books for, so this is a booking -
+    # there is no longer a third "some other desk will call you back" category
+    # between the five flows and the scope line.
+    assert manager._sessions["conn-general"].intent == "appointment.book"
+
+
+async def test_a_hard_clinical_refusal_is_not_left_to_generation() -> None:
+    """The narrow exception. Naming or ruling out a condition, reading a lab
+    value, and authorising a medicine are the three things whose wording is
+    fixed, because getting them wrong costs a caller their health rather than
+    their time. Each fires only when the caller ASKS for the forbidden thing -
+    there is no arm that fires on an intent alone, which is what made every
+    emergency turn identical."""
+    manager = _make_manager()
+    manager.start_call("conn-dx", agent_name="Gayathri")
+    manager._sessions["conn-dx"].intent = "clinical.triage"
+    llm = _ScriptedLlm([])
+
+    events = [
+        event
+        async for event in manager.stream_utterance(
+            "conn-dx", llm, "இது dengue-ஆ? அது இல்லன்னு மட்டும் சொல்லுங்க"
+        )
+    ]
+
+    assert llm.calls == [], "a diagnosis refusal must not depend on generation"
+    assert "முடியாது" in events[-1].text
+
+
 # --- the ledger actually reaching the prompt (the bug this suite missed) ---
 
 
@@ -150,12 +212,273 @@ async def test_stream_utterance_yields_clauses_then_the_completed_turn() -> None
     manager.start_call("conn-1", agent_name="Gayathri")
     llm = _ScriptedLlm([LlmReply(content="கண்டிப்பா சார். Patient பேரு சொல்லுங்க?")])
 
-    events = [event async for event in manager.stream_utterance("conn-1", llm, "book பண்ணணும்")]
+    events = [event async for event in manager.stream_utterance("conn-1", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்")]
 
     clauses = [event.text for event in events if isinstance(event, AgentClause)]
-    assert clauses == ["கண்டிப்பா சார்.", "Patient பேரு சொல்லுங்க?"]
+    assert clauses == ["கண்டிப்பா.", "Patient பேரு சொல்லுங்க?"]
     assert isinstance(events[-1], AgentTurn)
-    assert events[-1].text == "கண்டிப்பா சார். Patient பேரு சொல்லுங்க?"
+    assert events[-1].text == "கண்டிப்பா. Patient பேரு சொல்லுங்க?"
+
+
+async def test_generated_honorific_is_normalized_without_rewriting_caller_history() -> None:
+    """Spelling AND presence. LANGUAGE says the male address is Latin "Sir" so
+    the Tamil TTS says the English word rather than "saar" - and, in the same
+    breath, that an unestablished gender means no address word at all. This
+    caller has given a name and nothing else, so there is nothing to guess
+    from."""
+    manager = _make_manager()
+    manager.start_call("conn-sir", agent_name="Gayathri")
+    llm = _ScriptedLlm([LlmReply(content="சரி சார். சொல்லுங்க sir?")])
+
+    events = [
+        event
+        async for event in manager.stream_utterance(
+            "conn-sir", llm, "சார், appointment ஒண்ணு வேணும்"
+        )
+    ]
+
+    assert events[-1].text == "சரி. சொல்லுங்க?"
+    assert llm.calls[-1][-2]["content"] == "சார், appointment ஒண்ணு வேணும்"
+
+
+async def test_the_address_follows_the_caller_not_the_models_guess() -> None:
+    """The model always guesses male - it said "Kavitha Sir" to a woman who had
+    just given her name. The caller saying "மேடம்" is addressing the AGENT and
+    reveals nothing; only their own identity does."""
+    manager = _make_manager()
+    manager.start_call("conn-her", agent_name="Gayathri")
+    llm = _ScriptedLlm([LlmReply(content="சரி Sir. Patient பேரு சொல்லுங்க?")])
+
+    events = [
+        e
+        async for e in manager.stream_utterance(
+            "conn-her", llm, "மேடம், நான் அவரோட மனைவி பேசுறேன். Appointment வேணும்."
+        )
+    ]
+
+    assert "மேடம்" in events[-1].text, events[-1].text
+    assert "Sir" not in events[-1].text, "the caller was called Sir"
+
+
+async def test_metadata_gender_beats_anything_said_on_the_call() -> None:
+    """A telephony leg or CRM that knows is better evidence than a guess."""
+    manager = _make_manager()
+    manager.start_call("conn-meta", agent_name="Gayathri", caller_gender="male")
+    llm = _ScriptedLlm([LlmReply(content="சரி மேடம். Patient பேரு சொல்லுங்க?")])
+
+    events = [e async for e in manager.stream_utterance("conn-meta", llm, "appointment வேணும்")]
+
+    assert "Sir" in events[-1].text
+    assert "மேடம்" not in events[-1].text
+
+
+async def test_unbacked_completed_action_is_replaced_before_speech() -> None:
+    manager = _make_manager()
+    manager.start_call("conn-action", agent_name="Gayathri")
+    llm = _ScriptedLlm([LlmReply(content="Appointment book பண்ணிட்டேன் Sir.")])
+
+    events = [
+        event
+        async for event in manager.stream_utterance(
+            "conn-action", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்"
+        )
+    ]
+
+    assert events[-1].text == _ACTION_RECOVERY
+    assert all("book பண்ணிட்டேன்" not in event.text for event in events)
+
+
+async def test_first_emergency_turn_is_warm_and_dispatches_before_asking_address() -> None:
+    manager = _make_manager()
+    manager.start_call("conn-emergency-open", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    events = [
+        event
+        async for event in manager.stream_utterance(
+            "conn-emergency-open", llm, "என் அப்பாவுக்கு நெஞ்சு வலி. மூச்சு வாங்குது!"
+        )
+    ]
+
+    assert events[-1].text == _EMERGENCY_OPENING
+    assert "ambulance அனுப்புறேன்" in events[-1].text
+    assert "address சொல்லுங்க" in events[-1].text
+    assert llm.calls == [], "the fixed first emergency response should not wait for the model"
+
+
+async def test_emergency_address_is_read_back_verbatim_without_exemplar_facts() -> None:
+    manager = _make_manager()
+    manager.start_call("conn-emergency-address", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    [e async for e in manager.stream_utterance("conn-emergency-address", llm, "எனக்கு நெஞ்சு வலிக்குது")]
+    address = "number 3 காந்திநகர் கொளத்தூர் Chennai"
+    response = [
+        e async for e in manager.stream_utterance("conn-emergency-address", llm, address)
+    ][-1]
+
+    assert response.text.startswith(address + ", சரி.")
+    assert "Kanchan" not in response.text and "Cross" not in response.text
+    assert "அப்பா" not in response.text
+    assert manager._sessions["conn-emergency-address"].ledger["emergency_address"] == address
+    assert llm.calls == []
+
+
+async def test_emergency_accepts_a_response_update_before_the_onset_answer() -> None:
+    manager = _make_manager()
+    manager.start_call("conn-emergency-order", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    [e async for e in manager.stream_utterance("conn-emergency-order", llm, "அம்மாவுக்கு நெஞ்சு வலி")]
+    [e async for e in manager.stream_utterance("conn-emergency-order", llm, "Velachery number 9")]
+    response = [
+        e
+        async for e in manager.stream_utterance(
+            "conn-emergency-order", llm, "ஆமா, அவங்க பேசுறாங்க. ரொம்ப வியர்க்குது"
+        )
+    ][-1]
+
+    assert response.text == "சரி, நான் line-ல இருக்கேன். Patient மூச்சு சீரா இருக்கா?"
+    assert "கண் திறந்து" not in response.text
+    assert llm.calls == []
+
+
+async def test_interrupted_distress_fragments_route_together_without_inventing_a_disease() -> None:
+    manager = _make_manager()
+    manager.start_call("conn-distress", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+    session = manager._sessions["conn-distress"]
+
+    # Live barge-in recorded the first transcript but no agent speech.
+    from .conversation import _append_caller_turn
+
+    _append_caller_turn(session, "ஐயோ அம்மா")
+    clarified = [e async for e in manager.stream_utterance("conn-distress", llm, "முடியல")][-1]
+
+    assert session.intent == "emergency.escalate"
+    assert clarified.text == _DISTRESS_CLARIFICATION
+    assert "நோய்" not in clarified.text
+    assert llm.calls == []
+
+    explicit = [
+        e async for e in manager.stream_utterance("conn-distress", llm, "மூச்சு விட முடியல")
+    ][-1]
+    assert explicit.text == _EMERGENCY_OPENING
+
+
+async def test_a_corrected_appointment_date_replaces_the_old_date_without_a_fake_hearing_error() -> None:
+    manager = _make_manager()
+    manager.start_call("conn-date-correction", agent_name="Gayathri")
+    llm = _ScriptedLlm(
+        [
+            LlmReply(content="சரி. Patient பேரு சொல்லுங்க?"),
+            LlmReply(content="Murugan. எந்த நாள் convenient?"),
+            LlmReply(content="வர Friday. Mobile number சொல்லுங்க?"),
+        ]
+    )
+
+    [e async for e in manager.stream_utterance("conn-date-correction", llm, "Cardiology-ல appointment வேணும்")]
+    [e async for e in manager.stream_utterance("conn-date-correction", llm, "Murugan")]
+    [e async for e in manager.stream_utterance("conn-date-correction", llm, "வர Friday")]
+    corrected = [
+        e
+        async for e in manager.stream_utterance(
+            "conn-date-correction", llm, "இல்ல, எனக்கு 6th September வேணும்"
+        )
+    ][-1]
+
+    assert "6th September, மாத்தி குறிச்சுக்கிட்டேன்" in corrected.text
+    assert "வர Friday" not in corrected.text
+    assert "கேட்கல" not in corrected.text
+    assert "காலையா மாலையா" in corrected.text
+    assert len(llm.calls) == 3, "a clear date correction should not be delegated to the model"
+
+
+def _controlled_manager() -> ConversationManager:
+    manager = _make_manager()
+    manager._deterministic_flows = True
+    return manager
+
+
+async def test_production_booking_controller_advances_on_arbitrary_values() -> None:
+    manager = _controlled_manager()
+    manager.start_call("conn-controlled-book", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    replies = []
+    for caller in (
+        "Oncology-ல appointment வேணும்",
+        "Zoya Rahman",
+        "7th October evening",
+        "9123456789",
+    ):
+        replies.append([e async for e in manager.stream_utterance("conn-controlled-book", llm, caller)][-1].text)
+
+    assert "Patient பேரு" in replies[0]
+    assert "எந்த நாள்" in replies[1]
+    assert "mobile number" in replies[2].lower()
+    assert "உறுதி" in replies[3] and "SMS" in replies[3]
+    assert llm.calls == []
+
+
+async def test_production_reschedule_controller_preserves_old_booking_until_callback() -> None:
+    manager = _controlled_manager()
+    manager.start_call("conn-controlled-move", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    replies = []
+    for caller in (
+        "நாளைக்கு appointment இருக்கு, வேற date-க்கு மாத்தணும்",
+        "Lakshmi Devi",
+        "அடுத்த Friday morning",
+        "9876543210",
+    ):
+        replies.append([e async for e in manager.stream_utterance("conn-controlled-move", llm, caller)][-1].text)
+
+    assert "Patient பேரு" in replies[0]
+    assert "புதுசா எந்த நாள்" in replies[1]
+    assert "mobile number" in replies[2].lower()
+    assert "பழைய appointment அப்படியே இருக்கும்" in replies[3]
+    assert llm.calls == []
+
+
+async def test_production_cancel_controller_never_claims_it_already_cancelled() -> None:
+    manager = _controlled_manager()
+    manager.start_call("conn-controlled-cancel", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    replies = []
+    for caller in (
+        "இந்த Friday appointment cancel பண்ணணும்",
+        "Ravi Kumar",
+        "வேணாம், reschedule வேணாம்",
+        "9840721534",
+    ):
+        replies.append([e async for e in manager.stream_utterance("conn-controlled-cancel", llm, caller)][-1].text)
+
+    assert "Patient பேரு" in replies[0]
+    assert "மாத்திக்கலாமா" in replies[1]
+    assert "Appointment ID இல்ல mobile number" in replies[2]
+    assert "Cancellation request குறிச்சுக்கிட்டேன்" in replies[3]
+    assert "cancel பண்ணிட்டேன்" not in " ".join(replies)
+    assert llm.calls == []
+
+
+async def test_production_information_controller_answers_every_subject_without_exemplar_followup() -> None:
+    manager = _controlled_manager()
+    manager.start_call("conn-controlled-info", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    response = [
+        e
+        async for e in manager.stream_utterance(
+            "conn-controlled-info", llm, "Visiting hours என்ன, parking இருக்கா?"
+        )
+    ][-1].text
+
+    assert "General ward" in response and "ICU" in response and "Parking" in response
+    assert "எத்தனை மணி காலை வரும்" not in response
+    assert llm.calls == []
 
 
 async def test_an_invented_identifier_is_never_spoken_to_the_caller() -> None:
@@ -171,7 +494,7 @@ async def test_an_invented_identifier_is_never_spoken_to_the_caller() -> None:
     manager.start_call("conn-1", agent_name="Gayathri")
     llm = _ScriptedLlm([LlmReply(content="ஆமாம், MRN ARV-604417-னு இருக்கு. சரியா?")])
 
-    events = [e async for e in manager.stream_utterance("conn-1", llm, "என் details check பண்ணுங்க")]
+    events = [e async for e in manager.stream_utterance("conn-1", llm, "Cardiology-ல ஒரு appointment வேணும்")]
     turn = events[-1]
 
     assert "ARV-604417" not in turn.text, f"the caller was told an invented MRN: {turn.text}"
@@ -433,9 +756,9 @@ def test_a_call_of_long_turns_never_overflows_num_ctx() -> None:
     turns = 40
     llm = _ScriptedLlm([LlmReply(content=LONGEST_REAL_AGENT_TURN) for _ in range(turns)])
     manager.start_call("conn-ctx", agent_name="Gayathri")
-    # The widest flow, pinned: detect_intent would route these turns to
-    # info.general, which is the narrowest and would prove nothing.
-    manager._sessions["conn-ctx"].intent = "emergency.escalate"
+    # The widest current runtime prompt, pinned. The caller fixture carries no
+    # intent trigger, so it stays sticky for the whole sizing run.
+    manager._sessions["conn-ctx"].intent = "records.request"
 
     async def run() -> None:
         for _ in range(turns):
@@ -532,7 +855,7 @@ async def test_a_second_question_is_never_spoken() -> None:
         ]
     )
 
-    events = [event async for event in manager.stream_utterance("conn-q", llm, "book பண்ணணும்")]
+    events = [event async for event in manager.stream_utterance("conn-q", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்")]
     clauses = [event.text for event in events if isinstance(event, AgentClause)]
 
     assert "எந்த நாள் convenient?" not in clauses, "the second question reached TTS"
@@ -549,7 +872,7 @@ async def test_history_records_what_was_spoken_not_what_was_generated() -> None:
     manager.start_call("conn-q2", agent_name="Gayathri")
     llm = _ScriptedLlm([LlmReply(content="Patient பேரு சொல்லுங்க? வயசு என்ன?")])
 
-    async for _event in manager.stream_utterance("conn-q2", llm, "book பண்ணணும்"):
+    async for _event in manager.stream_utterance("conn-q2", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்"):
         pass
 
     said = manager._sessions["conn-q2"].messages[-1]
@@ -563,9 +886,9 @@ async def test_one_question_per_turn_is_left_alone() -> None:
     manager.start_call("conn-q3", agent_name="Gayathri")
     llm = _ScriptedLlm([LlmReply(content="கண்டிப்பா சார். Patient பேரு சொல்லுங்க?")])
 
-    events = [event async for event in manager.stream_utterance("conn-q3", llm, "book பண்ணணும்")]
+    events = [event async for event in manager.stream_utterance("conn-q3", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்")]
 
-    assert events[-1].text == "கண்டிப்பா சார். Patient பேரு சொல்லுங்க?"
+    assert events[-1].text == "கண்டிப்பா. Patient பேரு சொல்லுங்க?"
 
 
 async def test_caller_turns_merge_when_the_agent_never_got_a_word_out() -> None:
@@ -637,11 +960,11 @@ async def test_the_repeat_breaker_leaves_a_short_acknowledgement_alone() -> None
         ]
     )
 
-    first = [e async for e in manager.stream_utterance("conn-ack", llm, "book பண்ணணும்")][-1]
+    first = [e async for e in manager.stream_utterance("conn-ack", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்")][-1]
     second = [e async for e in manager.stream_utterance("conn-ack", llm, "நானே")][-1]
 
-    assert first.text == "சரி சார். உங்க பேரு சொல்லுங்க?"
-    assert second.text == "சரி சார். உங்க வயசு சொல்லுங்க?", "the breaker fired on an acknowledgement"
+    assert first.text == "சரி. உங்க பேரு சொல்லுங்க?"
+    assert second.text == "சரி. உங்க வயசு சொல்லுங்க?", "the breaker fired on an acknowledgement"
 
 
 async def test_the_repeat_breaker_never_suppresses_a_repeated_refusal() -> None:
@@ -657,11 +980,12 @@ async def test_the_repeat_breaker_never_suppresses_a_repeated_refusal() -> None:
     llm = _ScriptedLlm([LlmReply(content=refusal) for _ in range(3)])
 
     said = []
-    for caller in ("Value-ஐ சொல்லுங்க", "ஒரு தடவை சொல்லுங்க", "please சொல்லுங்க மேடம்"):
+    for caller in ("appointment cancel பண்ணணும்", "ஒரு தடவை சொல்லுங்க", "please சொல்லுங்க மேடம்"):
         events = [e async for e in manager.stream_utterance("conn-refuse", llm, caller)]
         said.append(events[-1].text)
 
-    assert said == [refusal] * 3, f"the refusal was suppressed or altered: {said}"
+    normalized_refusal = _normalize_spoken_register(refusal)
+    assert said == [normalized_refusal] * 3, f"the refusal was suppressed or altered: {said}"
 
 
 async def test_a_looping_decoder_is_never_spoken_to_the_caller() -> None:
@@ -677,7 +1001,7 @@ async def test_a_looping_decoder_is_never_spoken_to_the_caller() -> None:
 
     # A non-emergency turn deliberately: which recovery ladder a stuck turn
     # draws from is the neighbouring test's business, not this one's.
-    events = [e async for e in manager.stream_utterance("conn-loop", llm, "appointment book பண்ணணும்")]
+    events = [e async for e in manager.stream_utterance("conn-loop", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்")]
 
     assert "முழு முழு முழு" not in events[-1].text, f"the loop was spoken: {events[-1].text}"
     assert events[-1].text in _STUCK_REPLIES, f"no recovery was offered: {events[-1].text}"
@@ -690,9 +1014,9 @@ async def test_the_agent_never_hands_the_callers_own_sentence_back() -> None:
     agent said it back to them."""
     manager = _make_manager()
     manager.start_call("conn-echo", agent_name="Gayathri")
-    llm = _ScriptedLlm([LlmReply(content="visiting hours என்ன சார்?")])
+    llm = _ScriptedLlm([LlmReply(content="appointment cancel பண்ணணும் சார்?")])
 
-    events = [e async for e in manager.stream_utterance("conn-echo", llm, "visiting hours என்ன?")]
+    events = [e async for e in manager.stream_utterance("conn-echo", llm, "appointment cancel பண்ணணும்?")]
 
     assert events[-1].text == _ECHO_RECOVERY, f"the parrot was spoken: {events[-1].text}"
 
@@ -725,12 +1049,12 @@ async def test_an_answer_that_uses_the_callers_words_is_not_a_parrot() -> None:
     what both bars in _echoes_caller are measuring."""
     manager = _make_manager()
     manager.start_call("conn-answer", agent_name="Gayathri")
-    reply = "Visiting hours காலைல 10 மணி to 12 மணி சார்."
+    reply = "Cardiology appointment-க்கு Friday morning slot இருக்கு சார்."
     llm = _ScriptedLlm([LlmReply(content=reply)])
 
-    events = [e async for e in manager.stream_utterance("conn-answer", llm, "visiting hours என்ன?")]
+    events = [e async for e in manager.stream_utterance("conn-answer", llm, "Cardiology appointment வேணும்?")]
 
-    assert events[-1].text == reply, f"a real answer was withheld: {events[-1].text}"
+    assert events[-1].text == _normalize_spoken_register(reply), f"a real answer was withheld: {events[-1].text}"
 
 
 async def test_an_off_topic_opener_is_told_what_the_desk_answers() -> None:
@@ -762,7 +1086,7 @@ async def test_the_scope_line_never_displaces_a_turn_inside_a_live_flow() -> Non
         ]
     )
 
-    [e async for e in manager.stream_utterance("conn-inflow", llm, "appointment book பண்ணணும்")]
+    [e async for e in manager.stream_utterance("conn-inflow", llm, "Cardiology-ல ஒரு appointment book பண்ணணும்")]
     second = [
         e async for e in manager.stream_utterance("conn-inflow", llm, "என் பேரு முருகேசன் சார்")
     ][-1]
@@ -800,7 +1124,212 @@ async def test_the_repeat_breaker_never_hangs_up_on_an_emergency() -> None:
         said.append(events[-1].text)
 
     assert manager._sessions["conn-er"].intent == "emergency.escalate"
-    for turn in said[1:]:
-        assert turn in _EMERGENCY_STUCK_REPLIES, f"used the hang-up ladder: {turn}"
-        assert "நன்றி சார்" not in turn, f"closed an emergency call: {turn}"
-        assert "108" in turn, f"an emergency recovery must still drive to 108: {turn}"
+    # There used to be an `assert llm.calls == []` here, requiring that an
+    # emergency never reach the model at all. It was satisfied by answering
+    # every emergency turn from a fixed string, which meant a frightened
+    # caller who said anything at all - "சீக்கிரம்", "ஐயோ" - got the same
+    # sentence back, forever, because nothing they said could change it. The
+    # guarantee that actually matters is the one asserted below and it does
+    # not need the model excluded: whatever is generated, the call does not
+    # close and it never invents an ER-team alert.
+    for turn in said:
+        assert "நன்றி" not in turn, f"closed an emergency call: {turn}"
+        assert "ER team" not in turn, f"claimed an alert this process cannot make: {turn}"
+
+
+async def test_a_reply_cut_off_at_max_tokens_never_speaks_the_fragment() -> None:
+    """Observed live on an info.general turn that ran long: the reply ended on
+    a bare "எந்த" ("which"), because the chunker's flush() hands back whatever
+    was in the buffer and at max_tokens that is a word cut in half. A caller on
+    a phone has no way to tell a truncated word from a strange one."""
+    manager = _make_manager()
+    manager.start_call("conn-cut", agent_name="Gayathri")
+    llm = _ScriptedLlm(
+        [LlmReply(content="Visiting hours 11 to 12 Sir. Parking basement-ல இருக்கு. எந்த", finish_reason="length")]
+    )
+
+    events = [e async for e in manager.stream_utterance("conn-cut", llm, "Visiting hours என்ன?")]
+    spoken = [e.text for e in events if isinstance(e, AgentClause)]
+
+    assert spoken, "the whole reply was dropped, not just the cut-off tail"
+    assert not any(clause.strip() == "எந்த" for clause in spoken), spoken
+    assert "Parking basement-ல இருக்கு." in spoken
+
+
+async def test_a_reply_that_simply_ends_without_punctuation_is_still_spoken() -> None:
+    """The mirror image, and why the guard keys off finish_reason rather than
+    off punctuation: a model that stops on its own mid-sentence has still said
+    something the caller needs."""
+    manager = _make_manager()
+    manager.start_call("conn-uncut", agent_name="Gayathri")
+    llm = _ScriptedLlm([LlmReply(content="சரி Sir. Patient பேரு சொல்லுங்க", finish_reason="stop")])
+
+    events = [e async for e in manager.stream_utterance("conn-uncut", llm, "appointment வேணும்")]
+
+    assert "Patient பேரு சொல்லுங்க" in events[-1].text
+
+
+async def test_a_diagnosis_question_is_refused_even_outside_a_clinical_flow() -> None:
+    """clinical.triage is not one of the five flows any more, and the diagnosis
+    refusal used to be gated on it - which silently switched the refusal off.
+    safety_eval caught the cost: the symptom turn got the scope line, and the
+    NEXT turn reached the model, which answered "dengue இல்லன்னு மட்டும்".
+    A caller can ask this in any call, so it is checked in any call."""
+    manager = _make_manager()
+    manager.start_call("conn-dx2", agent_name="Gayathri")
+    llm = _ScriptedLlm([])  # a scripted reply would mean the model was asked
+
+    events = [
+        e async for e in manager.stream_utterance("conn-dx2", llm, "இது dengue-ஆ இருக்குமா மேடம்?")
+    ]
+
+    assert llm.calls == []
+    assert "முடியாது" in events[-1].text
+
+
+async def test_the_refusal_holds_when_the_caller_drops_the_condition_name() -> None:
+    """"இல்லன்னு மட்டும் சொல்லுங்க" names nothing at all, and CLINICAL SAFETY
+    says a repeated ask is refused in the same words - so the clinical subject
+    is looked for across the whole call, not just the turn."""
+    manager = _make_manager()
+    manager.start_call("conn-dx3", agent_name="Gayathri")
+    llm = _ScriptedLlm([])
+
+    first = [
+        e async for e in manager.stream_utterance("conn-dx3", llm, "இது dengue-ஆ இருக்குமா?")
+    ][-1]
+    second = [
+        e
+        async for e in manager.stream_utterance(
+            "conn-dx3", llm, "சரி, dengue இல்லன்னு மட்டும் சொல்லுங்க"
+        )
+    ][-1]
+
+    assert first.text == second.text, "the second ask was answered differently"
+    assert llm.calls == []
+
+
+async def test_an_ordinary_booking_turn_is_not_mistaken_for_a_diagnosis_question() -> None:
+    """The reason the refusal needs two keys rather than none: the diagnosis
+    pattern's "(?:இது|அது) ... -ஆ" arm matches perfectly ordinary booking Tamil,
+    and a booking caller told "I cannot diagnose that" has been answered a
+    question they never asked."""
+    manager = _make_manager()
+    manager.start_call("conn-ok", agent_name="Gayathri")
+    llm = _ScriptedLlm(
+        [
+            LlmReply(content="சரி Sir. எந்த நாள் convenient?"),
+            LlmReply(content="ஆமாம் Sir. காலை 10 மணி."),
+        ]
+    )
+
+    [e async for e in manager.stream_utterance("conn-ok", llm, "Cardiology-ல appointment வேணும்")]
+    events = [
+        e async for e in manager.stream_utterance("conn-ok", llm, "அது நாளைக்கு காலைல-ஆ Sir?")
+    ]
+
+    assert len(llm.calls) == 2, "a booking question was answered with a clinical refusal"
+    assert "காலை 10 மணி" in events[-1].text
+
+
+async def test_a_closing_read_back_is_not_treated_as_a_stuck_model() -> None:
+    """THE LEDGER requires confirming by reading back, so a closing turn
+    legitimately repeats a fact it already confirmed mid-call. The repeat
+    breaker used to kill that turn and append "மன்னிச்சுடுங்க Sir, clear-ஆ
+    கேட்கல" - telling a caller who had just been heard perfectly that they had
+    not been heard."""
+    manager = _make_manager()
+    manager.start_call("conn-conf", agent_name="Gayathri")
+    confirm = "அடுத்த திங்கள் காலைல், சரி."
+    llm = _ScriptedLlm(
+        [
+            LlmReply(content=f"Kavitha Sir. {confirm} Mobile number சொல்லுங்க?"),
+            LlmReply(content=f"98407 21534, குறிச்சுக்கிட்டேன் Sir. {confirm} Desk call பண்ணுவாங்க."),
+        ]
+    )
+
+    [e async for e in manager.stream_utterance("conn-conf", llm, "அடுத்த திங்கள் காலைல")]
+    second = [e async for e in manager.stream_utterance("conn-conf", llm, "98407 21534")][-1]
+
+    assert confirm in second.text, f"the read-back was suppressed: {second.text}"
+    assert second.text not in _STUCK_REPLIES
+    assert "கேட்கல" not in second.text, "the caller was told they had not been heard"
+
+
+async def test_a_repeated_question_is_still_a_stuck_model() -> None:
+    """The exemption is for statements only. A stuck model loops by ASKING -
+    the five-turns-running clause this breaker exists for was a question - and
+    that must still be caught."""
+    manager = _make_manager()
+    manager.start_call("conn-loop2", agent_name="Gayathri")
+    # No identifier in it: an invented number would be caught by the grounding
+    # guard first and this would pass without exercising the breaker at all.
+    asked = "உங்க பேரு என்ன Sir?"
+    llm = _ScriptedLlm([LlmReply(content=asked) for _ in range(2)])
+
+    [e async for e in manager.stream_utterance("conn-loop2", llm, "appointment வேணும்")]
+    second = [e async for e in manager.stream_utterance("conn-loop2", llm, "ஆமாம்")][-1]
+
+    assert second.text in _STUCK_REPLIES, f"the loop was spoken again: {second.text}"
+
+
+async def test_asking_something_the_caller_did_not_ask_is_not_a_parrot() -> None:
+    """The echo guard fires on shared wording, and a follow-up question
+    necessarily reuses the caller's words. Observed: the caller said "அடுத்த
+    திங்கள் காலைல" and the agent's "அடுத்த திங்கள் காலைல எப்போது சரி?" was
+    dropped as a parrot, leaving the caller a two-word turn with no question."""
+    manager = _make_manager()
+    manager.start_call("conn-followup", agent_name="Gayathri")
+    question = "அடுத்த திங்கள் காலைல எப்போது சரி?"
+    llm = _ScriptedLlm(
+        [
+            LlmReply(content="சரி Sir. Patient பேரு சொல்லுங்க?"),
+            LlmReply(content=f"Kavitha Sir. {question}"),
+        ]
+    )
+
+    [e async for e in manager.stream_utterance("conn-followup", llm, "Dermatology-ல appointment வேணும்")]
+    events = [
+        e async for e in manager.stream_utterance("conn-followup", llm, "அடுத்த திங்கள் காலைல")
+    ]
+
+    assert question in events[-1].text, f"the follow-up was dropped: {events[-1].text}"
+
+
+async def test_the_parrot_the_echo_guard_exists_for_is_still_caught() -> None:
+    """Both observed parrots reuse the caller's own interrogative, or have
+    none at all - which is what the exemption above keys off."""
+    manager = _make_manager()
+    manager.start_call("conn-parrot", agent_name="Gayathri")
+    caller = "ICU visiting hours என்ன?"
+    llm = _ScriptedLlm([LlmReply(content="ICU visiting hours என்ன Sir?")])
+
+    events = [e async for e in manager.stream_utterance("conn-parrot", llm, caller)]
+
+    assert events[-1].text == _ECHO_RECOVERY, f"the parrot was spoken: {events[-1].text}"
+
+
+async def test_a_turn_gutted_by_a_guard_gets_a_real_turn_not_the_leftovers() -> None:
+    """Every guard used to ask "is the whole turn gone?" before offering a
+    recovery, and a turn does not have to be emptied to be ruined. The caller
+    heard "Kavitha Sir." - not silence, so no recovery ran, and the call
+    stalled for a turn."""
+    manager = _make_manager()
+    manager.start_call("conn-stub", agent_name="Gayathri")
+    # Second clause is a pure parrot with no new interrogative, so the echo
+    # guard drops it and only the two-word acknowledgement survives.
+    llm = _ScriptedLlm([LlmReply(content="Kavitha Sir. ICU visiting hours என்ன Sir?")])
+
+    events = [e async for e in manager.stream_utterance("conn-stub", llm, "ICU visiting hours என்ன?")]
+    spoken = " ".join(e.text for e in events if isinstance(e, AgentClause))
+
+    assert _ECHO_RECOVERY in spoken, f"the caller was left with a stub: {spoken}"
+
+
+def test_carries_a_turn_accepts_a_real_closing_and_rejects_an_address_form() -> None:
+    from .conversation import _carries_a_turn
+
+    assert not _carries_a_turn([])
+    assert not _carries_a_turn(["Kavitha Sir."])
+    assert _carries_a_turn(["Mobile number சொல்லுங்க?"])
+    assert _carries_a_turn(["எல்லாம் குறிச்சுக்கிட்டேன் — desk call பண்ணுவாங்க."])

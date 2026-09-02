@@ -15,9 +15,13 @@ import pytest
 
 from backend.prompt_builder import (
     DEFAULT_FLOW,
+    DEPARTMENT_INTENT,
     EMERGENCY_INTENT,
+    SUPPORTED_INTENTS,
     PromptBuilder,
+    _format_exemplars,
     detect_intent,
+    names_a_department,
     parse_flow_playbooks,
 )
 
@@ -55,12 +59,105 @@ def test_detect_intent_returns_none_for_a_bare_acknowledgement() -> None:
     # sticky precisely because these carry no trigger at all.
     assert detect_intent("ஆமாம் சரி தான்") is None
     assert detect_intent("98407 21534") is None
+    assert detect_intent("வாரத்துக்கு ரெண்டு தடவை வர முடியும்") is None
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "B positive blood கிடைக்குமா?",
+        "fitness certificate வேணும்",
+        "mobile number update பண்ணணும்",
+        "என் bill-ல ஒரு charge தப்பா இருக்கு",
+        "நேத்து blood test report வந்துடுச்சா",
+        "tablets தீர்ந்துடுச்சு refill வேணும்",
+        "discharge summary copy வேணும்",
+        "insurance-ல cover ஆகுமா",
+        "நான் புதுசா register பண்ணணும்",
+        "ரெண்டு மணி நேரம் காக்க வெச்சீங்க, staff மோசமா பேசுனாங்க",
+    ],
+)
+def test_work_for_another_desk_never_resolves_to_a_supported_flow(utterance: str) -> None:
+    """The scope gate is only as good as this: a turn belonging to one of the
+    fifteen dropped flows must never come back as one of the five. Whether it
+    comes back as its own intent name or as None does not matter to the caller
+    - conversation.py answers both with the scope line - but coming back as
+    appointment.book would mean the desk started taking a booking for a bill
+    query."""
+    assert detect_intent(utterance) not in SUPPORTED_INTENTS
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Cardiology-ல appointment வேணும்",
+        "Ortho-க்கு வரணும்",
+        "Paediatrics department எப்போ இருக்கு",
+        "Gynaecology-ல ஒரு slot",
+        "ENT doctor-a பாக்கணும்",
+        "Dermatology consult வேணும்",
+        "Urology specialist இருக்காரா",
+        "Gastroenterology-ல time வேணும்",
+        "Nephrology-க்கு போகணும்",
+        "Psychiatry-ல appointment",
+        "Pulmonology doctor",
+        "Ophthalmology-ல book பண்ணணும்",
+        "Dental-ல ஒரு appointment",
+        "Physiotherapy session வேணும்",
+        "Endocrinology-ல consult",
+        "General medicine-ல பாக்கணும்",
+        "நரம்பு doctor-a பாக்கணும்",
+        "எலும்பு doctor இருக்காரா",
+        "குழந்தை doctor-a பாக்கணும்",
+        "இதய doctor-a பாக்கணும்",
+    ],
+)
+def test_every_department_reaches_the_booking_flow(utterance: str) -> None:
+    """"Cardiology" is the only department in the exemplars, and the whole
+    point of the five-flow MVP is that the twentieth department works as well
+    as the first. Either a trigger matches outright, or the department
+    fallback catches it - both land on appointment.book."""
+    routed = detect_intent(utterance)
+    if routed is None:
+        assert names_a_department(utterance), f"{utterance!r} routes nowhere at all"
+        routed = DEPARTMENT_INTENT
+    assert routed == DEPARTMENT_INTENT, f"{utterance!r} routed to {routed!r}"
+
+
+def test_a_department_name_is_not_a_department_request_when_it_is_an_answer() -> None:
+    """names_a_department is a fallback conversation.py consults only before a
+    flow is picked. These are the turns that make that conditional necessary:
+    said mid-cancellation, they are answers, not new bookings."""
+    assert detect_intent("Cardiology") is None
+    assert detect_intent("ஆர்த்தோ தான்") is None
+
+
+def test_only_the_five_supported_playbooks_are_loadable() -> None:
+    builder = _loaded_builder()
+
+    assert set(builder._playbooks) == set(SUPPORTED_INTENTS)
+    # An unsupported intent must degrade to info.general, never to its own
+    # playbook - the scope gate is in conversation.py, and this is the belt to
+    # its braces.
+    assert "BILLING" not in builder.build("billing.query").upper()
 
 
 def test_emergency_outranks_a_flow_mentioned_in_the_same_breath() -> None:
     # Sec6A: the emergency override outranks everything, including an explicit
     # billing/appointment intent stated in the same sentence.
     assert detect_intent("bill பத்தி கேட்கணும், ஆனா அப்பாவுக்கு நெஞ்சு வலி") == EMERGENCY_INTENT
+
+
+def test_a_bill_problem_is_out_of_scope_however_it_is_worded() -> None:
+    # Which of the fifteen a turn lands on stopped mattering when they all
+    # started getting the same answer; that it never lands on one of the five
+    # is the only property left worth asserting.
+    for wording in (
+        "bill-ல ஒரு charge சரி இல்லன்னு நினைக்கிறேன்",
+        "பில் amount ரொம்ப அதிகமா இருக்கு",
+        "discharge bill-ல extra போட்டிருக்காங்க",
+    ):
+        assert detect_intent(wording) not in SUPPORTED_INTENTS
 
 
 def test_parse_flow_playbooks_finds_all_twenty_flows() -> None:
@@ -102,6 +199,24 @@ def test_exemplars_are_code_mixed_and_short() -> None:
             assert line.count("?") <= 1, f"{intent} exemplar asks more than one question: {line}"
 
 
+def test_agent_prompt_uses_english_sir_without_rewriting_the_caller() -> None:
+    """Only agent speech is normalized; caller evidence must remain verbatim."""
+    builder = _loaded_builder(with_exemplars=True)
+
+    booking = builder.build("appointment.book")
+    agent_lines = [line[4:] for line in booking.splitlines() if line.startswith("YOU:")]
+
+    assert agent_lines
+    assert all("சார்" not in line for line in agent_lines)
+    assert any("Sir" in line for line in agent_lines)
+
+    formatted = _format_exemplars(
+        [["caller", "சார், ஒரு help."], ["agent", "கண்டிப்பா சார்."]]
+    )
+    assert "CALLER: சார், ஒரு help." in formatted
+    assert "YOU: கண்டிப்பா Sir." in formatted
+
+
 def test_build_includes_only_the_active_flows_exemplars() -> None:
     builder = _loaded_builder(with_exemplars=True)
 
@@ -123,10 +238,21 @@ def test_build_attaches_only_the_active_flows_playbook() -> None:
 
     booking = builder.build("appointment.book")
     emergency = builder.build(EMERGENCY_INTENT)
+    information = builder.build("info.general")
 
-    assert "bookAppointment ⇒ appointment ID" in booking
-    assert "dispatchAmbulance" not in booking.split("PLAYBOOK")[1]
-    assert "Take the ADDRESS FIRST" in emergency
+    assert "TAKING DOWN a booking request" in booking
+    assert "ADDRESS FIRST" not in booking.split("PLAYBOOK")[1]
+    assert "ask for the ADDRESS" in emergency
+    assert "dispatching an ambulance immediately" in emergency
+    assert "Never give an ETA" in emergency
+    # No tool name from the spec survives into a runtime prompt for the four
+    # flows whose body is overridden - naming a tool the process does not have
+    # is what taught the model to narrate lookups it cannot perform.
+    for tool_name in ("bookAppointment", "searchSlots", "dispatchAmbulance", "cancelAppointment"):
+        assert tool_name not in booking and tool_name not in emergency, tool_name
+    # info.general has no override, so it still carries its own body - and its
+    # standing facts, which are the only facts the agent may state unprompted.
+    assert "Monday to Saturday 8 to 1" in information
 
 
 def test_build_always_carries_the_language_and_safety_rules() -> None:
@@ -146,16 +272,25 @@ def test_build_falls_back_to_general_information_for_an_unknown_intent() -> None
     assert builder.build("not.a.real.intent") == builder.build(DEFAULT_FLOW)
 
 
-def test_assembled_prompt_is_far_smaller_than_the_master_spec() -> None:
+@pytest.mark.parametrize("intent", sorted(SUPPORTED_INTENTS))
+def test_assembled_prompt_is_far_smaller_than_the_master_spec(intent: str) -> None:
     # The whole reason this module exists: the master prompt is a ~15k-token
     # spec that either gets truncated (losing the language rules) or allocates
     # a KV cache too large for a small GPU.
+    #
+    # A THIRD, not a quarter, and the difference is the whole per-turn budget
+    # this bound is protecting. Measured with bench_ctx.py, the largest of the
+    # five (appointment.book, whose exemplar set is the longest) assembles to
+    # ~12k characters against LLM_NUM_CTX=6144, and Tamil script is close to
+    # one token per character - so the real headroom is thinner than the
+    # character count suggests. Every one of the five is checked, not just
+    # book, because a bound that only one flow is held to is not a bound.
     builder = _loaded_builder()
 
-    assembled = builder.build("appointment.book")
+    assembled = builder.build(intent)
     master = _MASTER_PROMPT.read_text(encoding="utf-8")
 
-    assert len(assembled) < len(master) / 4
+    assert len(assembled) < len(master) / 3
 
 
 def test_build_raises_before_load() -> None:
@@ -480,13 +615,14 @@ def test_every_playbook_can_actually_be_reached_by_the_router() -> None:
 # case here routed to the WRONG flow before these triggers existed, because
 # the generic pattern matched a word the specific request also contains
 # ("appointment", "scan", "charge" inside DIScharge).
+#
+# Only pairs where BOTH flows are still served are left. Where the specific
+# flow was dropped, the specific/generic contest is settled the other way on
+# purpose - see the test below.
 @pytest.mark.parametrize(
     ("caller_turn", "expected", "was_previously"),
     [
-        ("என் appointment confirm ஆயிடுச்சா", "appointment.confirm", "appointment.book"),
-        ("நாளைக்கு appointment இருக்கா-ன்னு check பண்ணுங்க", "appointment.confirm", "appointment.book"),
         ("appointment-ஐ வேற நாளுக்கு மாத்தணும்", "appointment.reschedule", "appointment.book"),
-        ("scan-க்கு appointment வேணும்", "lab.book", "appointment.book"),
         ("discharge summary copy வேணும்", "records.request", "billing.query"),
         ("surgery ஆகி ஒரு வாரம் ஆச்சு, stitch வலிக்குது", "postprocedure.checkin", "clinical.triage"),
     ],
@@ -495,6 +631,27 @@ def test_a_specific_request_outranks_the_generic_flow_it_overlaps(
     caller_turn: str, expected: str, was_previously: str
 ) -> None:
     assert detect_intent(caller_turn) == expected
+
+
+@pytest.mark.parametrize(
+    "caller_turn",
+    [
+        "என் appointment confirm ஆயிடுச்சா",
+        "நாளைக்கு appointment இருக்கா-ன்னு check பண்ணுங்க",
+        "scan-க்கு appointment வேணும்",
+    ],
+)
+def test_an_appointment_word_keeps_the_caller_inside_the_desk(caller_turn: str) -> None:
+    """These used to route to appointment.confirm and lab.book, both dropped.
+
+    The scope line is the wrong answer to every one of them: a caller asking
+    whether their appointment is confirmed, or wanting a scan slot, has rung
+    about an APPOINTMENT, and being told this desk does not do appointments is
+    absurd. Booking is the honest degradation - the details get taken down and
+    the desk calls back - and that is why detect_intent checks the five before
+    it checks the fifteen.
+    """
+    assert detect_intent(caller_turn) == "appointment.book"
 
 
 # Ordinary hospital business, in the phrasings a caller actually uses. None of

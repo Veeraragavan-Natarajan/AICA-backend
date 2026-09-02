@@ -261,6 +261,26 @@ def test_the_word_that_routes_an_emergency_survives_the_asr() -> None:
     assert normalize_transcript("எனக்கு அம்புலான்ஸ் வேணும்") == "எனக்கு ambulance வேணும்"
 
 
+def test_spoken_weekdays_are_normalized_for_appointment_dates() -> None:
+    assert normalize_transcript("வர ஃப்ரைடே") == "வர Friday"
+    assert normalize_transcript("வர ப்ரிட்") == "வர Friday"
+
+
+def test_spoken_ordinal_and_month_are_normalized_as_a_date() -> None:
+    assert normalize_transcript("சிக்ஸ்த் செப்டம்பர் வேணும்") == "6th September வேணும்"
+    assert normalize_transcript("செவன்த் செப்டம்பர் வேணும்") == "7th September வேணும்"
+    # The ASR sometimes drops the ordinal ending entirely. Beside a month, the
+    # bare cardinal is still unambiguously a calendar date.
+    assert normalize_transcript("சிக்ஸ் செப்டம்பர்") == "6th September"
+
+
+def test_a_single_house_number_is_normalized_without_breaking_phone_numbers() -> None:
+    assert normalize_transcript("number மூணு காந்திநகர் கொளத்தூர் chennai") == (
+        "number 3 காந்திநகர் கொளத்தூர் chennai"
+    )
+    assert normalize_transcript("வீட்டு எண் மூணு") == "வீட்டு எண் 3"
+
+
 def test_short_generated_entries_never_rewrite_ordinary_tamil() -> None:
     """The generated lexicon is built by round-tripping English through TTS and
     back, and below six characters what comes back collides with real Tamil:
