@@ -117,6 +117,56 @@ def test_tts_warmup_covers_every_scripted_conversation_line() -> None:
     assert expected <= set(tts.calls)
 
 
+def test_one_failed_line_does_not_abandon_the_rest_of_the_warm() -> None:
+    """Observed: 2 of 20 fixed lines warmed. The loop used to `break` on the
+    first failure, and the default engine is a network call that fails per
+    clause - so one unlucky line cost every remaining line its cached audio.
+    Now that the cache persists across runs, that poisoned future runs too."""
+    from types import SimpleNamespace
+
+    from .main import _warm
+
+    class _FlakyTts:
+        settings = SimpleNamespace(language="ta")
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def synthesize(self, text: str, language: str) -> None:
+            self.calls.append(text)
+            if len(self.calls) == 1:  # first line only, then the link recovers
+                raise RuntimeError("edge TTS timed out")
+
+    tts = _FlakyTts()
+    _warm(tts)
+
+    assert len(tts.calls) > 5, f"the warm stopped after {len(tts.calls)} lines on one failure"
+
+
+def test_a_dead_engine_stops_the_warm_instead_of_retrying_every_line() -> None:
+    """The other half: if nothing at all is succeeding, the engine is down, and
+    retrying every remaining line at the full per-clause timeout just burns
+    minutes of a background thread for nothing."""
+    from types import SimpleNamespace
+
+    from .main import _WARM_GIVE_UP_AFTER, _warm
+
+    class _DeadTts:
+        settings = SimpleNamespace(language="ta")
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def synthesize(self, text: str, language: str) -> None:
+            self.calls.append(text)
+            raise RuntimeError("edge TTS timed out")
+
+    tts = _DeadTts()
+    _warm(tts)
+
+    assert len(tts.calls) == _WARM_GIVE_UP_AFTER
+
+
 class _ScriptedLlm:
     """Same pattern as test_conversation.py's fake - scripted replies, no network."""
 

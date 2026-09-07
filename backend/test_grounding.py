@@ -145,6 +145,74 @@ def test_booking_and_cancelling_claims_need_their_own_tools() -> None:
     ]
 
 
+def test_a_completion_claim_is_caught_however_the_flow_phrases_it() -> None:
+    """The table used to match only the exact English-verb-plus-"பண்ணிட்ட" form
+    the exemplars happen to use. Measured across the five served flows it
+    caught 6 of 17 false completions, and appointment.reschedule - one of the
+    five - had no row at all, so "மாத்திட்டேன்" reached the caller as fact.
+
+    Every line below is the agent telling a caller a hospital action is DONE
+    with no tool behind it. A miss here is a caller who stops chasing an
+    appointment that does not exist.
+    """
+    said = [
+        # appointment.book
+        "Appointment book பண்ணிட்டேன் சார்.",
+        "உங்க appointment confirm பண்ணிட்டேன்.",
+        "Slot ஒதுக்கிட்டேன், நாளைக்கு காலை பத்து மணிக்கு.",
+        "Appointment போட்டுட்டேன் சார்.",
+        "Booking முடிஞ்சிடுச்சு சார்.",
+        # appointment.reschedule
+        "Appointment reschedule பண்ணிட்டேன்.",
+        "உங்க appointment-ஐ புதன் கிழமைக்கு மாத்திட்டேன்.",
+        "Date change பண்ணிட்டேன் சார்.",
+        "நாளைக்கு மாத்தி வெச்சிட்டேன்.",
+        # appointment.cancel
+        "Appointment cancel பண்ணிட்டேன்.",
+        "உங்க appointment-ஐ ரத்து பண்ணிட்டேன்.",
+        "Booking-ஐ நீக்கிட்டேன் சார்.",
+        # notifications nothing in this process can actually send
+        "SMS அனுப்பிட்டேன் சார்.",
+        "Doctor-கிட்ட சொல்லிட்டேன்.",
+    ]
+    missed = [line for line in said if not unbacked_action_claims(line, set())]
+
+    assert missed == [], f"{len(missed)} false completion claim(s) would reach the caller: {missed}"
+
+
+def test_rescheduling_is_clean_once_its_tool_has_run() -> None:
+    reply = "உங்க appointment-ஐ புதன் கிழமைக்கு மாத்திட்டேன்."
+
+    assert unbacked_action_claims(reply, set()) == ["said the appointment is rescheduled"]
+    assert unbacked_action_claims(reply, {"rescheduleAppointment"}) == []
+
+
+def test_the_broadened_guard_still_lets_the_real_calls_through() -> None:
+    """The regression this fix could most easily have caused.
+
+    Every line here is one the agent SHOULD say, taken from the recorded calls
+    in call_events.db. The closing line is the dangerous one: it is spoken on
+    29 of the 208 recorded calls and it carries both a completion marker
+    ("குறிச்சுக்கிட்டேன்" - I have noted it down) and the word "appointment",
+    so any rule matching a completion marker NEAR a subject noun withholds it
+    and silently breaks every successful booking call. Noting something down is
+    not doing it, which is why the patterns match the action VERB instead.
+    """
+    legitimate = [
+        "எல்லாம் குறிச்சுக்கிட்டேன் — appointment desk-ல இருந்து confirm பண்ணி call பண்ணுவாங்க.",
+        "குறிச்சுக்கிட்டேன்.",
+        "எல்லா தகவலும் குறிச்சுக்கிட்டேன். Appointment desk நேரத்தை உறுதி பண்ணி call பண்ணுவாங்க; SMS-ம் வரும்.",
+        "Appointment book பண்ணட்டுமா சார்?",
+        "நான் date மாத்தட்டுமா சார்?",
+        "Cancel பண்ணட்டுமா?",
+        "Doctor-கிட்ட சொல்லிடுங்க சார்.",
+        "எந்த நாள் உங்களுக்கு convenient சார்?",
+    ]
+    withheld = [line for line in legitimate if unbacked_action_claims(line, set())]
+
+    assert withheld == [], f"the guard would withhold {len(withheld)} legitimate clause(s): {withheld}"
+
+
 def test_promising_the_ambulance_will_arrive_is_a_dispatch_claim() -> None:
     """Observed live at temperature 0 on a chest-pain call, with the pattern
     matching completed forms only: "இப்பவே 108-க்கு call பண்ணுங்க, ambulance

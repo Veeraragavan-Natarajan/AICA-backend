@@ -8,6 +8,7 @@ audio or the native library's actual probabilities.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from .settings import AudioSettings
 from .vad import TenVadSegmenter
@@ -267,9 +268,13 @@ def test_a_quiet_syllable_can_never_end_a_turn_that_is_already_open() -> None:
 
     An energy gate applied to every frame scored a quiet trailing syllable as
     silence, so the endpoint countdown ran on through the middle of a word and
-    turns came back as one-character transcripts ("ந", "ப", "க"). Loudness is
-    therefore read in exactly one place - the not-yet-in-speech branch. Once a
-    turn is open, only the VAD flag decides when it ends.
+    turns came back as one-character transcripts ("ந", "ப", "க").
+
+    What must hold is that a quiet syllable cannot END a turn and cannot lose
+    its audio. It is NOT that a quiet frame reports speech_frame - that field
+    feeds only the barge-in gate, and reporting it for quiet frames is what let
+    a low voice cut the agent off mid-sentence. See
+    test_a_quiet_flagged_run_cannot_cut_the_agent_off below.
     """
     settings = AudioSettings()
     onset, endpoint = settings.vad_start_frames, settings.endpoint_silence_frames
@@ -289,10 +294,13 @@ def test_a_quiet_syllable_can_never_end_a_turn_that_is_already_open() -> None:
     # exactly what the end of a Tamil word sounds like. A quiet passage as long
     # as the whole silence window must not end the turn: if it did, quiet and
     # silent would mean the same thing, which is the reverted behaviour.
+    kept_before = len(segmenter._utterance)
     for _ in range(endpoint):
         update = segmenter.process(_frame(whisper))
         assert not update.speech_ended, "a quiet syllable ended the turn mid-word"
-        assert update.speech_frame, "a quiet syllable inside a turn was scored as silence"
+    assert len(segmenter._utterance) == kept_before + endpoint, (
+        "a quiet syllable was dropped from the utterance instead of transcribed"
+    )
 
     # Speaking up again clears the countdown completely, so the turn continues.
     for _ in range(settings.vad_resume_frames):
@@ -305,6 +313,110 @@ def test_a_quiet_syllable_can_never_end_a_turn_that_is_already_open() -> None:
         if update.speech_ended:
             break
     assert update.speech_ended and update.end_reason == "silence"
+
+
+def test_a_quiet_flagged_run_cannot_cut_the_agent_off() -> None:
+    """The reported fault: the agent stops mid-sentence for a low voice.
+
+    Measured over the 208 recorded calls in call_events.db, 45% of the turns
+    the VAD opened transcribed to nothing at all (500 empty, 40 of 1-3 chars),
+    and there were 332 agent_interrupted events. Onset probability does not
+    separate those from real speech - real p50 0.796 vs empty p50 0.731 - so
+    raising VAD_THRESHOLD costs real speech faster than it removes noise.
+    Loudness does separate them, and it was already being computed here and
+    thrown away: every flagged frame reported speech_frame regardless of level,
+    so a quiet flagged run walked straight into the barge-in counter.
+
+    speech_frame feeds the barge-in gate and nothing else (main.py and
+    telephony.py pass it to ActiveSpeech.note_speech), so reporting
+    loud-AND-flagged narrows exactly one behaviour and nothing else.
+    """
+    settings = AudioSettings()
+    onset = settings.vad_start_frames
+    whisper = int(settings.vad_onset_min_rms // 10)
+
+    segmenter = _make_segmenter([1] * (onset + 40))
+    for _ in range(onset):
+        segmenter.process(_frame(SPOKEN))
+    assert segmenter.in_speech
+
+    quiet_updates = [segmenter.process(_frame(whisper)) for _ in range(20)]
+
+    assert not any(u.speech_frame for u in quiet_updates), (
+        "a quiet flagged run still feeds the barge-in gate and can cut the agent off"
+    )
+    assert not any(u.speech_ended for u in quiet_updates), "the quiet run ended the turn"
+    # ...and a caller who actually speaks up is heard immediately.
+    assert segmenter.process(_frame(SPOKEN)).speech_frame, "a real interruption was suppressed"
+
+
+def test_the_onset_update_carries_the_level_the_loudness_gate_saw() -> None:
+    """Recorded into the vad_start event so vad_onset_min_rms / vad_onset_snr
+    can be tuned against real calls. Without it the only thing written down is
+    the onset probability, which does not separate noise from speech - measured
+    over the recorded calls, empty turns sat at p50 0.731 and real speech at
+    0.796. A diagnostic that silently reports 0.0 forever is worse than none,
+    so this asserts a real level reaches the field."""
+    settings = AudioSettings()
+    segmenter = _make_segmenter([1] * settings.vad_start_frames)
+
+    for _ in range(settings.vad_start_frames - 1):
+        segmenter.process(_frame(SPOKEN))
+    onset = segmenter.process(_frame(SPOKEN))
+
+    assert onset.speech_started
+    assert onset.onset_rms == pytest.approx(SPOKEN, rel=0.01)
+    assert onset.onset_rms >= settings.vad_onset_min_rms
+
+
+def test_a_quiet_run_cannot_reach_the_barge_in_gate_end_to_end() -> None:
+    """The same thing through the gate the VAD actually drives, because that is
+    where it matters: ActiveSpeech resets its counter on a false speech_frame,
+    so quiet frames must never accumulate towards an interrupt."""
+    import asyncio
+
+    from .barge_in import ActiveSpeech
+
+    settings = AudioSettings()
+    onset = settings.vad_start_frames
+    whisper = int(settings.vad_onset_min_rms // 10)
+
+    async def scenario() -> tuple[bool, bool]:
+        agent_turn = asyncio.get_running_loop().create_future()  # stands in for speech
+        task = asyncio.ensure_future(asyncio.sleep(30))
+        active = ActiveSpeech(settings.barge_in_speech_frames)
+        active.set(task)
+
+        segmenter = _make_segmenter([1] * (onset + 200))
+        for _ in range(onset):
+            u = segmenter.process(_frame(SPOKEN))
+            active.note_speech(u.speech_frame, u.speech_started)
+
+        # Far more quiet flagged frames than the barge-in gate requires, but
+        # still inside the quiet-endpoint watchdog so the turn stays open -
+        # otherwise this would be testing the watchdog instead of the gate.
+        quiet_run = settings.vad_quiet_endpoint_frames - 1
+        assert quiet_run > settings.barge_in_speech_frames
+        quiet_interrupted = False
+        for _ in range(quiet_run):
+            u = segmenter.process(_frame(whisper))
+            quiet_interrupted |= active.note_speech(u.speech_frame, u.speech_started)
+        assert segmenter.in_speech, "the turn closed before the gate could be tested"
+
+        # Then someone genuinely talks over the agent.
+        loud_interrupted = False
+        for _ in range(settings.barge_in_speech_frames + 2):
+            u = segmenter.process(_frame(SPOKEN))
+            loud_interrupted |= active.note_speech(u.speech_frame, u.speech_started)
+
+        task.cancel()
+        agent_turn.cancel()
+        return quiet_interrupted, loud_interrupted
+
+    quiet_interrupted, loud_interrupted = asyncio.run(scenario())
+
+    assert not quiet_interrupted, "quiet frames cut the agent off"
+    assert loud_interrupted, "a real interruption no longer works"
 
 
 def test_the_onset_bar_adapts_to_a_noisy_room() -> None:

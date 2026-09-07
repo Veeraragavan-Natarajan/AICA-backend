@@ -63,10 +63,13 @@ class AudioSettings:
     # scored as "silence", the endpoint countdown ran on through the middle of
     # a word, and turns came back as one-character transcripts ("ந", "ப", "க").
     # The lesson was not that loudness is unusable, it is that loudness must
-    # never be allowed to END a turn - only to refuse to start one. So these
-    # two knobs are read in exactly one place, the not-yet-in-speech branch of
-    # TenVadSegmenter.process(). Once a turn is open, endpointing is decided by
-    # the VAD flag alone, and no quiet syllable can cut it short.
+    # never be allowed to END a turn frame-for-frame. It may refuse to START
+    # one, it may refuse to count as an INTERRUPTION, and it may close a turn
+    # only after the much longer vad_quiet_endpoint_frames watchdog. Those are
+    # the three places these knobs are read; TenVadSegmenter's module docstring
+    # says why each is safe. No quiet syllable can cut a turn short, and the
+    # caller's audio is captured and transcribed from its first frame however
+    # quiet it is.
     #
     # Measured, per 16 ms frame of real Tamil speech at full digital level:
     #
@@ -79,6 +82,17 @@ class AudioSettings:
     # learned continuously while nobody is speaking, and onset has to beat a
     # multiple of it. Raise VAD_ONSET_SNR first if a noisy room still opens
     # turns; raise VAD_ONSET_MIN_RMS only if the microphone is unusually hot.
+    #
+    # TUNE THESE FROM DATA, NOT FROM FEEL. Every vad_start event now records
+    # `onset_rms` and `noise_floor` next to the probability, so the sweep is:
+    # pair each vad_start with the transcript that followed it on the same
+    # call, split on whether that transcript was empty, and pick the smallest
+    # bar that drops noise turns without dropping real ones. Do NOT reach for
+    # VAD_THRESHOLD instead - measured over the 208 recorded calls, onset
+    # probability for turns that transcribed to NOTHING sat at p50 0.731
+    # against real speech's 0.796, so every threshold that removes a
+    # meaningful share of noise costs more real speech than it saves
+    # (0.45 -> 13.7% of noise gone, 9.7% of real speech lost).
     vad_onset_min_rms: float = float(os.getenv("VAD_ONSET_MIN_RMS", "200"))
     vad_onset_snr: float = float(os.getenv("VAD_ONSET_SNR", "3.0"))
 
@@ -400,6 +414,17 @@ class TtsSettings:
     # the three the reader happened to believe. +10% is the one that was
     # actually asked for and measured, and it shortens every turn by ~9%.
     rate: str = os.getenv("TTS_RATE", "+10%")
+
+    # Where synthesized MP3 bodies are kept BETWEEN runs. The default engine is
+    # a network round-trip, and measured over the 208 recorded calls in
+    # call_events.db 79.9% of spoken clauses are text an earlier call already
+    # synthesized - all of which the old process-local dict discarded at every
+    # restart. See backend/tts.py's _CACHE_VERSION comment for the numbers.
+    #
+    # Set TTS_CACHE_DIR="" to disable it entirely (the tests that assert a
+    # network call happens do exactly that); anything else is a directory that
+    # is created on first write.
+    cache_dir: str = os.getenv("TTS_CACHE_DIR", ".tts_cache")
 
     # Edge PADS every clip it returns, and the padding is what the caller hears
     # as a long gap after every full stop. Measured on real agent clauses at

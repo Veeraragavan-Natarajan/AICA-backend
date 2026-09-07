@@ -47,3 +47,6 @@ logs/
 
 # Build artefact of llm-package/ — regenerate rather than commit the zip.
 aruvi-llm-package.zip
+
+# Synthesized TTS audio, rebuilt on demand from the engine.
+.tts_cache/

@@ -299,7 +299,18 @@ async def capture_telephony_audio(websocket: WebSocket) -> None:
 
     async def queue_segment(update: VadUpdate) -> None:
         if update.speech_started:
-            await record_event({"type": "vad_start", "probability": round(update.probability, 4)})
+            await record_event(
+                {
+                    "type": "vad_start",
+                    "probability": round(update.probability, 4),
+                    "onset_rms": round(update.onset_rms, 1),
+                    # Guarded because `segmenter` is built on the "start" frame
+                    # and typed Optional until then; media is refused before
+                    # that, so in practice it is always set by the time an
+                    # onset can fire.
+                    "noise_floor": round(segmenter.noise_floor, 1) if segmenter else 0.0,
+                }
+            )
             logger.info("speech started: %s", connection_id)
         # Same gate as main.py: a phone line has more noise than a headset, not
         # less. See ActiveSpeech.note_speech().

@@ -33,9 +33,13 @@ sentence is worse than the fault, because dropping the middle clause of
 nothing. So a fabrication ENDS the turn on a plain request for the detail
 rather than punching a hole in it. See conversation.speakable().
 
-unbacked_action_claims() below is still report-only, and for the original
-reason: the sentence it catches has no identifier to withhold, so there is
-nothing for a choke point to drop.
+unbacked_action_claims() below WAS report-only, on the reasoning that the
+sentence it catches has no identifier to withhold. That is no longer true
+either: conversation.speakable() withholds the clause outright and ends the
+turn, exactly as it does for a fabricated identifier, because "I have booked
+your appointment" is not improved by dropping a word out of the middle of it.
+The one deliberate exception is emergency dispatch, which this MVP treats as a
+built-in simulated action - see ConversationManager._check_action_claims().
 """
 
 from __future__ import annotations
@@ -190,18 +194,82 @@ _ACTION_CLAIMS: tuple[tuple[str, frozenset[str], re.Pattern[str]], ...] = (
     ),
     (
         "said the appointment is booked",
-        frozenset({"bookAppointment", "confirmAppointment", "rescheduleAppointment"}),
-        re.compile(r"(?:book|confirm)\s*பண்ணிட்ட", re.IGNORECASE),
+        frozenset({"bookAppointment", "confirmAppointment"}),
+        # These rows used to match ONLY the exact English-verb-plus-"பண்ணிட்ட"
+        # form the exemplars happen to use, which is a fraction of how the
+        # claim is actually said. Measured against 17 false completions across
+        # the five served flows, the table caught 6 - and appointment.reschedule,
+        # one of the five, had NO row at all: "மாத்திட்டேன்" (I have changed it)
+        # went straight through to the caller.
+        #
+        # Each alternative is a specific ACTION VERB in completed aspect, not a
+        # subject noun near a generic completion marker. That distinction is
+        # load-bearing in both directions:
+        #
+        #   "Appointment book பண்ணட்டுமா?"    an OFFER - must stay clean, or the
+        #                                     agent can no longer offer anything
+        #   "எல்லாம் குறிச்சுக்கிட்டேன் —      the CORRECT closing line, said on
+        #    appointment desk-ல இருந்து ..."   29 of the 208 recorded calls. It
+        #                                     carries both a completion marker
+        #                                     ("குறிச்சுக்கிட்டேன்", I have noted
+        #                                     it down) and the word "appointment",
+        #                                     so any proximity rule withholds it
+        #                                     and breaks every booking call.
+        #
+        # Noting something down is not doing it, which is why the verb, not the
+        # marker, is what these match.
+        re.compile(
+            r"(?:book|confirm)\s*பண்ணிட்ட"
+            r"|ஒதுக்கிட்ட"
+            r"|(?:appointment|booking|slot)[^.!?]{0,20}(?:போட்டுட்ட|முடிஞ்சிடுச்|ஆயிடுச்)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # appointment.reschedule is a SERVED flow and had no row until now.
+        "said the appointment is rescheduled",
+        frozenset({"rescheduleAppointment", "bookAppointment"}),
+        re.compile(
+            r"(?:reschedule|change)\s*பண்ணிட்ட"
+            r"|மாத்திட்ட"
+            r"|மாத்தி\s*வெச்சிட்ட",
+            re.IGNORECASE,
+        ),
     ),
     (
         "said the appointment is cancelled",
         frozenset({"cancelAppointment"}),
-        re.compile(r"cancel\s*பண்ணிட்ட", re.IGNORECASE),
+        re.compile(
+            r"(?:cancel|ரத்து)\s*பண்ணிட்ட"
+            r"|(?:appointment|booking)[^.!?]{0,20}நீக்கிட்ட",
+            re.IGNORECASE,
+        ),
     ),
     (
         "said a ticket has been raised",
         frozenset({"createTicket", "escalate"}),
         re.compile(r"ticket[^.!?]{0,40}(?:போட்டுட்ட|raise\s*பண்ணிட்ட)", re.IGNORECASE),
+    ),
+    (
+        # A caller told an SMS is already sent stops waiting for the desk's
+        # call and waits for a message that is never coming. The scripted
+        # closing line says "SMS-ம் வரும்" - an SMS WILL come, from the desk -
+        # which is a different sentence and stays clean.
+        "said an SMS has already been sent",
+        frozenset({"resendReport", "confirmAppointment"}),
+        re.compile(r"(?:SMS|message)[^.!?]{0,20}அனுப்பிட்ட", re.IGNORECASE),
+    ),
+    (
+        # First person completed ONLY. "Doctor-கிட்ட சொல்லிடுங்க" is the agent
+        # telling the CALLER to mention it to the doctor, which is ordinary
+        # advice; "சொல்லிட்டேன்" claims this process notified a clinician, and
+        # it has no tool that can.
+        "said a doctor or the staff has been informed",
+        frozenset({"escalate", "createTicket"}),
+        re.compile(
+            r"(?:doctor|டாக்டர்|staff|desk)[^.!?]{0,25}(?:சொல்லிட்டே|சொல்லிட்டோ|தெரிவிச்சிட்டே)",
+            re.IGNORECASE,
+        ),
     ),
 )
 

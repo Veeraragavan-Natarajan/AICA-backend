@@ -46,8 +46,11 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import hashlib
 import io
 import logging
+import os
+from pathlib import Path
 import re
 
 import numpy as np
@@ -76,9 +79,34 @@ EDGE_RETRY_DELAY_SECONDS = 0.4
 # the failure that otherwise leaves a caller with no voice at all.
 #
 # ponytail: in-memory and unbounded-LRU-free - a plain dict with a cap, since
-# a call's vocabulary of repeated lines is tiny. Persist it to disk if the
-# greeting must also survive a cold start on a dead link.
+# a call's vocabulary of repeated lines is tiny. Backed by a disk cache below,
+# so this only has to be the hot layer.
 EDGE_CACHE_MAX_ENTRIES = 64
+
+# ...and the disk layer, which is the one that matters. Measured over the 208
+# real recorded calls in call_events.db, 2505 spoken clauses:
+#
+#     repeat WITHIN a call     12.0%   the dict above already caught these
+#     repeat ACROSS calls      67.9%   every one of these was a fresh network call
+#     genuinely novel          20.1%
+#
+# So four clauses in five are text some earlier call already paid for, and the
+# process-local dict threw all of it away at every restart. That is the whole
+# TTS latency story on this deployment: the engine is a network round-trip to
+# Microsoft, measured this session at a 3-9s median per novel clause with
+# 30-50% of them timing out outright, and no amount of concurrency or timeout
+# tuning moved it (both were measured and both were left alone). Not making the
+# call at all is the only thing that does.
+#
+# Keyed on voice+rate+text so retuning TTS_RATE cannot serve yesterday's audio,
+# and storing the MP3 body rather than decoded PCM so the clip stays reusable
+# if the inter-clause pause is retuned.
+#
+# ponytail: no eviction. A hospital desk's spoken vocabulary is small and
+# bounded by the prompt - the 208 recorded calls hold ~800 distinct clauses at
+# ~20KB each, so ~16MB. Add an age sweep if a long-lived deployment proves that
+# wrong.
+_CACHE_VERSION = "v1"
 
 # Written Tamil-English code-mix glues an English word to its Tamil case
 # suffix with a hyphen - "Cardiology-ல", "department-க்கு", "bill-ல" - and the
@@ -108,6 +136,55 @@ _LATIN_TAMIL_HYPHEN_RE = re.compile(r"([A-Za-z0-9])-(?=[\u0b80-\u0bff])")
 def speakable(text: str) -> str:
     """Rewrite one clause into what the voice can actually pronounce."""
     return _LATIN_TAMIL_HYPHEN_RE.sub(r"\1 ", text)
+
+
+class Mp3DiskCache:
+    """Synthesized MP3 bodies, kept across restarts. Never raises.
+
+    Every method swallows OS errors deliberately: this is a latency
+    optimisation sitting in front of a working network path, so a full disk, a
+    read-only mount or a permissions problem must cost a round trip and
+    nothing else. A cache that can take down a call is worse than no cache.
+    """
+
+    def __init__(self, directory: str | os.PathLike[str]) -> None:
+        self.directory = Path(directory)
+
+    def _path(self, voice: str, rate: str, text: str) -> Path:
+        digest = hashlib.sha256(
+            "\x00".join((_CACHE_VERSION, voice, rate, text)).encode("utf-8")
+        ).hexdigest()
+        return self.directory / f"{digest}.mp3"
+
+    def get(self, voice: str, rate: str, text: str) -> bytes | None:
+        try:
+            body = self._path(voice, rate, text).read_bytes()
+        except OSError:
+            return None
+        # An empty file is a failed write, not a silent clause: treat it as a
+        # miss so it gets re-fetched rather than serving silence forever.
+        return body or None
+
+    def put(self, voice: str, rate: str, text: str, body: bytes) -> None:
+        if not body:
+            return
+        path = self._path(voice, rate, text)
+        # Written to a unique temp name and renamed, because os.replace is
+        # atomic: a crash or a second worker mid-write can otherwise leave a
+        # TRUNCATED mp3 that every later call happily serves as a clipped
+        # clause, forever. The pid suffix keeps two processes from colliding
+        # on the same temp file.
+        temp = path.with_suffix(f".{os.getpid()}.part")
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            temp.write_bytes(body)
+            os.replace(temp, path)
+        except OSError as error:
+            logger.warning("TTS disk cache write failed for %r: %s", text[:40], error)
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def trim_padding(
@@ -203,6 +280,8 @@ class EdgeTts:
         # in _stream_mp3(), never from the partial-on-timeout one, so a
         # clipped clause can't be served for the rest of the process's life.
         self._mp3_cache: dict[str, bytes] = {}
+        # Survives restarts; see _CACHE_VERSION for why it is the whole point.
+        self._disk_cache = Mp3DiskCache(settings.cache_dir) if settings.cache_dir else None
         # edge streams MP3; libsndfile 1.2+ decodes it, and every clip so far
         # has come back at 24 kHz. Read from the decoder rather than assumed,
         # since main.py tells the client the rate before the first clause.
@@ -263,6 +342,21 @@ class EdgeTts:
         )
         return SynthesisResult(samples=samples, sample_rate=self._sample_rate)
 
+    def _remember(self, text: str, body: bytes) -> None:
+        """Record one COMPLETE clause body in both cache layers.
+
+        Only ever called from the success path in _stream_mp3(), never from the
+        partial-on-timeout one - a clipped clause must not be served for the
+        rest of the process's life, still less written to disk where it would
+        outlive it.
+        """
+        if not body:
+            return
+        if len(self._mp3_cache) < EDGE_CACHE_MAX_ENTRIES:
+            self._mp3_cache[text] = body
+        if self._disk_cache is not None and self._voice:
+            self._disk_cache.put(self._voice, self.settings.rate, text, body)
+
     async def _stream_mp3(self, text: str) -> bytes:
         """Fetch one clause's audio, retrying a transient network failure.
 
@@ -281,6 +375,14 @@ class EdgeTts:
         if cached is not None:
             return cached
 
+        if self._disk_cache is not None:
+            cached = self._disk_cache.get(self._voice, self.settings.rate, text)
+            if cached is not None:
+                # Promoted into the hot dict so a line repeated inside one call
+                # does not go back to the filesystem for every clause.
+                self._remember(text, cached)
+                return cached
+
         timeout = self.settings.timeout_seconds
         last_error: Exception | None = None
         for attempt in range(EDGE_ATTEMPTS):
@@ -297,8 +399,7 @@ class EdgeTts:
                         if chunk["type"] == "audio":
                             chunks += chunk["data"]
                     body = bytes(chunks)
-                    if body and len(self._mp3_cache) < EDGE_CACHE_MAX_ENTRIES:
-                        self._mp3_cache[text] = body
+                    self._remember(text, body)
                     return body
             except TimeoutError as error:
                 # Deliberately NOT retried. A timeout means the endpoint is

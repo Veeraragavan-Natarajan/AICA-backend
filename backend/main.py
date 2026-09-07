@@ -91,6 +91,12 @@ class ConversationTurnOutcome:
     interrupted: bool = False
 
 
+# A dead endpoint should not be retried once per fixed line at the full
+# per-clause timeout each. Three in a row is the engine being down, not three
+# unlucky clauses.
+_WARM_GIVE_UP_AFTER = 3
+
+
 def _warm_tts_cache(tts) -> None:
     """Synthesize the fixed lines once so the first caller does not pay for them."""
     try:
@@ -128,15 +134,30 @@ def _warm(tts) -> None:
         "புரியுது Sir.",
     ]
     warmed = 0
+    consecutive_failures = 0
     for line in lines:
         try:
             tts.synthesize(line, tts.settings.language)
             warmed += 1
+            consecutive_failures = 0
         except Exception:
             # Pure optimisation - a cold cache only costs latency, so a failure
             # here must never stop the server coming up.
             logger.warning("TTS cache warm failed for %r", line[:40], exc_info=True)
-            break
+            # Carry on rather than abandoning the rest. The default engine is a
+            # network call that fails INDIVIDUALLY - measured this session, 30-50%
+            # of clauses time out on a degraded link while the others succeed in
+            # ~1s - so a `break` here threw away every remaining line because one
+            # was unlucky. Observed: 2 of 20 lines warmed. That mattered little
+            # when the cache died with the process; now that it persists, one bad
+            # line used to poison every future run's cache too.
+            consecutive_failures += 1
+            if consecutive_failures >= _WARM_GIVE_UP_AFTER:
+                logger.warning(
+                    "TTS cache warm gave up after %d consecutive failures - the engine looks down",
+                    consecutive_failures,
+                )
+                break
     logger.info("TTS cache warmed with %d of %d fixed lines", warmed, len(lines))
 
 
@@ -581,7 +602,21 @@ async def capture_browser_audio(websocket: WebSocket) -> None:
     async def queue_segment(update: VadUpdate) -> None:
         nonlocal partial_frame_count
         if update.speech_started:
-            await send_event({"type": "vad_start", "probability": round(update.probability, 4)})
+            # onset_rms and noise_floor are recorded so the LOUDNESS gate can be
+            # tuned from real calls instead of guessed at. Onset probability
+            # alone cannot do it: measured over the 208 recorded calls, turns
+            # that transcribed to nothing had p50 0.731 against real speech's
+            # 0.796, so raising VAD_THRESHOLD costs real speech faster than it
+            # removes noise. Loudness is the axis that separates them, and it
+            # was the one thing not being written down.
+            await send_event(
+                {
+                    "type": "vad_start",
+                    "probability": round(update.probability, 4),
+                    "onset_rms": round(update.onset_rms, 1),
+                    "noise_floor": round(segmenter.noise_floor, 1),
+                }
+            )
             logger.info("speech started: %s", connection_id)
         # Not on speech_started: one flagged 16 ms hop is a cough, not a
         # caller interrupting. See ActiveSpeech.note_speech().

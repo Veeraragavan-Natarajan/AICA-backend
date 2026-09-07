@@ -18,7 +18,7 @@ could cancel the agent mid-sentence.
           countdown. Resetting on a single hop is what let background noise
           hold the microphone open indefinitely.
 
-A third gate, LOUDNESS, decides two things and it is worth being exact about
+A third gate, LOUDNESS, decides three things and it is worth being exact about
 which, because this docstring used to claim it was read "in exactly one place,
 the not-yet-in-speech branch" and that is not what the code does:
 
@@ -30,13 +30,19 @@ the not-yet-in-speech branch" and that is not what the code does:
              loud ends the turn whatever the VAD is flagging. That watchdog is
              deliberately TWICE endpoint_silence_frames; settings.py refuses to
              start if they are equal.
+  barge-in   `speech_frame` reports loud-AND-flagged, not merely flagged, so a
+             quiet run cannot cut the agent off mid-sentence. speech_frame
+             feeds the barge-in gate and nothing else.
 
-So the honest version of the rule is: loudness may refuse to start a turn, and
-it may end one only after twice the silence window. What it may never do is
-count as silence frame-for-frame. An energy gate applied to every frame that
-way was tried here and reverted: a quiet trailing syllable scored as silence,
-the endpoint countdown ran on through the middle of a word, and turns came back
-as one-character transcripts.
+So the honest version of the rule is: loudness may refuse to start a turn, it
+may refuse to count as an interruption, and it may end a turn only after twice
+the silence window. What it may never do is count as silence frame-for-frame.
+An energy gate applied to every frame that way was tried here and reverted: a
+quiet trailing syllable scored as silence, the endpoint countdown ran on
+through the middle of a word, and turns came back as one-character transcripts.
+Note the asymmetry that makes the barge-in use safe: refusing to INTERRUPT on a
+quiet frame costs nothing, because the caller's audio is captured and
+transcribed from its first frame either way.
 
 The watchdog was not there for tidiness. Once the agent has spoken, residual
 echo and the browser's automatic gain control produce long runs of flagged
@@ -63,6 +69,13 @@ class VadUpdate:
     speech_ended: bool = False
     end_reason: str | None = None
     samples: np.ndarray | None = None
+    # Frame level at the moment a turn opened. Carried so the caller can RECORD
+    # what the loudness gate actually saw: the onset probability is already
+    # logged and does not separate noise from speech (real p50 0.796 vs empty
+    # p50 0.731 over the recorded calls), so loudness is the axis any future
+    # tuning of vad_onset_min_rms / vad_onset_snr has to be done against.
+    # Only meaningful on the speech_started update.
+    onset_rms: float = 0.0
 
 
 class TenVadSegmenter:
@@ -143,7 +156,12 @@ class TenVadSegmenter:
                 self._pre_roll.clear()
                 if len(self._utterance) >= self.settings.max_utterance_frames:
                     return self._finish(probability, "max_duration")
-                return VadUpdate(probability=probability, speech_frame=True, speech_started=True)
+                return VadUpdate(
+                    probability=probability,
+                    speech_frame=True,
+                    speech_started=True,
+                    onset_rms=rms,
+                )
 
             # Either the run broke before it was long enough, or it was not
             # loud enough to be someone talking TO us. Keep the audio as
@@ -163,7 +181,8 @@ class TenVadSegmenter:
             #
             # A frame that is merely flagged is KEPT in the utterance (audio is
             # never discarded) but does not restart anything.
-            if self._loud_enough_to_open_a_turn(self._rms(frame)):
+            loud = self._loud_enough_to_open_a_turn(self._rms(frame))
+            if loud:
                 self._quiet_frames = 0
                 # Only a SUSTAINED run restarts the endpoint countdown. A
                 # single blip used to reset it outright, which is the other way
@@ -180,7 +199,25 @@ class TenVadSegmenter:
                 # Nothing loud for 704 ms. Whatever the VAD thinks it can hear,
                 # the caller has stopped talking to us.
                 return self._finish(probability, "silence")
-            return VadUpdate(probability=probability, speech_frame=True)
+            # `loud`, not True. speech_frame feeds exactly one thing - the
+            # barge-in gate (main.py and telephony.py call note_speech with it
+            # and nothing else reads it) - and reporting every flagged frame
+            # meant a QUIET flagged run could cut the agent off mid-sentence.
+            # That is the reported fault: the agent stops for a low voice, a
+            # fan, or its own residual echo, none of which the caller
+            # experiences as having interrupted anything.
+            #
+            # This is the same bar an onset must clear, so it cannot silence a
+            # caller who was loud enough to open the turn in the first place -
+            # and ActiveSpeech.note_speech() RESETS its counter on a false
+            # frame, so the gate now means what it says: `sustained_frames`
+            # consecutive hops of speech that is actually AUDIBLE.
+            #
+            # Deliberately NOT used to end a turn or to trim the utterance -
+            # see this module's docstring for the reverted change that scored
+            # a quiet trailing syllable as silence and cut turns off mid-word.
+            # The audio is still captured and transcribed from its first frame.
+            return VadUpdate(probability=probability, speech_frame=loud)
 
         self._resume_frames = 0
         self._silence_frames += 1
